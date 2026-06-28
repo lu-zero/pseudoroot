@@ -15,6 +15,10 @@ type GetuidFn = unsafe extern "C" fn() -> u32;
 type GeteuidFn = unsafe extern "C" fn() -> u32;
 type GetgidFn = unsafe extern "C" fn() -> u32;
 type GetegidFn = unsafe extern "C" fn() -> u32;
+type ChownFn = unsafe extern "C" fn(*const c_char, u32, u32) -> i32;
+type ChmodFn = unsafe extern "C" fn(*const c_char, libc::mode_t) -> i32;
+type LchownFn = unsafe extern "C" fn(*const c_char, u32, u32) -> i32;
+type FchownFn = unsafe extern "C" fn(i32, u32, u32) -> i32;
 
 // Use OnceLock for thread-safe lazy initialization
 static REAL_STAT: OnceLock<StatFn> = OnceLock::new();
@@ -24,6 +28,10 @@ static REAL_GETUID: OnceLock<GetuidFn> = OnceLock::new();
 static REAL_GETEUID: OnceLock<GeteuidFn> = OnceLock::new();
 static REAL_GETGID: OnceLock<GetgidFn> = OnceLock::new();
 static REAL_GETEGID: OnceLock<GetegidFn> = OnceLock::new();
+static REAL_CHOWN: OnceLock<ChownFn> = OnceLock::new();
+static REAL_CHMOD: OnceLock<ChmodFn> = OnceLock::new();
+static REAL_LCHOWN: OnceLock<LchownFn> = OnceLock::new();
+static REAL_FCHOWN: OnceLock<FchownFn> = OnceLock::new();
 
 /// Initialize the function pointers by looking up the real functions
 #[ctor::ctor]
@@ -36,6 +44,10 @@ fn init() {
         REAL_GETEUID.set(get_next_function::<GeteuidFn>(b"geteuid\0")).ok();
         REAL_GETGID.set(get_next_function::<GetgidFn>(b"getgid\0")).ok();
         REAL_GETEGID.set(get_next_function::<GetegidFn>(b"getegid\0")).ok();
+        REAL_CHOWN.set(get_next_function::<ChownFn>(b"chown\0")).ok();
+        REAL_CHMOD.set(get_next_function::<ChmodFn>(b"chmod\0")).ok();
+        REAL_LCHOWN.set(get_next_function::<LchownFn>(b"lchown\0")).ok();
+        REAL_FCHOWN.set(get_next_function::<FchownFn>(b"fchown\0")).ok();
     }
 }
 
@@ -110,6 +122,38 @@ impl PlatformHelper for LinuxHelper {
             libc::getegid()
         }
     }
+
+    unsafe fn real_chown(path: *const c_char, uid: u32, gid: u32) -> i32 {
+        if let Some(func) = REAL_CHOWN.get() {
+            func(path, uid, gid)
+        } else {
+            libc::chown(path, uid, gid)
+        }
+    }
+
+    unsafe fn real_chmod(path: *const c_char, mode: libc::mode_t) -> i32 {
+        if let Some(func) = REAL_CHMOD.get() {
+            func(path, mode)
+        } else {
+            libc::chmod(path, mode)
+        }
+    }
+
+    unsafe fn real_lchown(path: *const c_char, uid: u32, gid: u32) -> i32 {
+        if let Some(func) = REAL_LCHOWN.get() {
+            func(path, uid, gid)
+        } else {
+            libc::lchown(path, uid, gid)
+        }
+    }
+
+    unsafe fn real_fchown(fd: i32, uid: u32, gid: u32) -> i32 {
+        if let Some(func) = REAL_FCHOWN.get() {
+            func(fd, uid, gid)
+        } else {
+            libc::fchown(fd, uid, gid)
+        }
+    }
 }
 
 // Re-export the functions for use in the main lib.rs
@@ -139,4 +183,20 @@ pub unsafe fn real_getgid() -> u32 {
 
 pub unsafe fn real_getegid() -> u32 {
     LinuxHelper::real_getegid()
+}
+
+pub unsafe fn real_chown(path: *const c_char, uid: u32, gid: u32) -> i32 {
+    LinuxHelper::real_chown(path, uid, gid)
+}
+
+pub unsafe fn real_chmod(path: *const c_char, mode: libc::mode_t) -> i32 {
+    LinuxHelper::real_chmod(path, mode)
+}
+
+pub unsafe fn real_lchown(path: *const c_char, uid: u32, gid: u32) -> i32 {
+    LinuxHelper::real_lchown(path, uid, gid)
+}
+
+pub unsafe fn real_fchown(fd: i32, uid: u32, gid: u32) -> i32 {
+    LinuxHelper::real_fchown(fd, uid, gid)
 }

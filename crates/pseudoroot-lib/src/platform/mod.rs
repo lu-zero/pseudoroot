@@ -30,6 +30,18 @@ pub trait PlatformHelper {
 
     /// Get the real getegid function
     unsafe fn real_getegid() -> u32;
+
+    /// Get the real chown function
+    unsafe fn real_chown(path: *const std::os::raw::c_char, uid: u32, gid: u32) -> i32;
+
+    /// Get the real chmod function
+    unsafe fn real_chmod(path: *const std::os::raw::c_char, mode: libc::mode_t) -> i32;
+
+    /// Get the real lchown function
+    unsafe fn real_lchown(path: *const std::os::raw::c_char, uid: u32, gid: u32) -> i32;
+
+    /// Get the real fchown function
+    unsafe fn real_fchown(fd: i32, uid: u32, gid: u32) -> i32;
 }
 
 #[cfg(target_os = "linux")]

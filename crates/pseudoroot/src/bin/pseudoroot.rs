@@ -30,6 +30,14 @@ struct Args {
     /// Print the library path and exit
     #[arg(long)]
     print_library_path: bool,
+    
+    /// Fake UID to use (default: 0 = root)
+    #[arg(long, default_value = "0")]
+    uid: u32,
+    
+    /// Fake GID to use (default: 0 = root)
+    #[arg(long, default_value = "0")]
+    gid: u32,
 }
 
 fn main() {
@@ -45,7 +53,7 @@ fn main() {
             }
             None => {
                 eprintln!("Error: Could not find pseudoroot library.");
-                eprintln!("The library needs to be built first with: cargo cbuild -p pseudoroot-lib --release");
+                eprintln!("The library needs to be built first with: cargo build -p pseudoroot-lib --release");
                 process::exit(1);
             }
         }
@@ -64,7 +72,7 @@ fn main() {
         Some(path) => path,
         None => {
             eprintln!("Error: Could not find pseudoroot library.");
-            eprintln!("The library needs to be built first with: cargo cbuild -p pseudoroot-lib --release");
+            eprintln!("The library needs to be built first with: cargo build -p pseudoroot-lib");
             process::exit(1);
         }
     };
@@ -80,7 +88,13 @@ fn main() {
         process::exit(1);
     };
 
-    // Check if the environment variable already contains other libraries
+    // Set the fake UID and GID environment variables for the library to read
+    let mut command = process::Command::new(&args.command[0]);
+    command.args(&args.command[1..]);
+    command.env("PSEUDOROOT_UID", args.uid.to_string());
+    command.env("PSEUDOROOT_GID", args.gid.to_string());
+
+    // Check if the preload environment variable already contains other libraries
     let env_var_value = if let Some(existing) = env::var_os(env_var_name) {
         // Append our library to the existing value
         // On Linux, LD_PRELOAD uses colon-separated list
@@ -93,10 +107,7 @@ fn main() {
         // Just set our library
         OsString::from(lib_path)
     };
-
-    // Execute the command with the modified environment
-    let mut command = process::Command::new(&args.command[0]);
-    command.args(&args.command[1..]);
+    
     command.env(env_var_name, env_var_value);
 
     // Inherit stdin, stdout, stderr from the parent process
@@ -126,17 +137,15 @@ fn main() {
 fn find_library_path() -> Option<std::path::PathBuf> {
     // Try to find the library in the build directory
     let candidates = [
-        // Built with cargo-c in release mode
+        // Built with cargo-c
         "target/cbuild/release/libpseudoroot_lib.so",
         "target/cbuild/debug/libpseudoroot_lib.so",
-        // Built with cargo in release mode
-        "target/release/libpseudoroot_lib.so",
+        // Built with cargo - debug
         "target/debug/libpseudoroot_lib.so",
-        // macOS
-        "target/cbuild/release/libpseudoroot_lib.dylib",
-        "target/cbuild/debug/libpseudoroot_lib.dylib",
-        "target/release/libpseudoroot_lib.dylib",
         "target/debug/libpseudoroot_lib.dylib",
+        // Built with cargo - release
+        "target/release/libpseudoroot_lib.so",
+        "target/release/libpseudoroot_lib.dylib",
     ];
 
     for candidate in candidates {
