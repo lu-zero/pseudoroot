@@ -118,14 +118,11 @@ pub fn daemon_get_ownership(path: &str) -> Option<FileOwnership> {
 
 /// Set ownership for a path in daemon
 pub fn daemon_set_ownership(path: String, ownership: FileOwnership) -> bool {
-    // For now, we need to implement this in the daemon
-    // The current daemon doesn't have a SetOwnership message type yet
     let channel = match get_daemon_channel() {
         Some(ch) => ch,
         None => return false,
     };
     let mut channel_guard = channel.lock().unwrap();
-    // We'll use RegisterOwnership for now
     use crate::protocol::OwnershipPayload;
     let payload = OwnershipPayload {
         path,

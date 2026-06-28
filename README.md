@@ -1,6 +1,6 @@
 # pseudoroot
 
-[![LICENSE](https://img.shields.io/badge/license-MIT%20OR%20Apache-2.0-blue.svg)](LICENSE-MIT)
+[![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
 [![Build Status](https://github.com/lu-zero/pseudoroot/workflows/CI/badge.svg)](https://github.com/lu-zero/pseudoroot/actions?query=workflow:CI)
 [![dependency status](https://deps.rs/repo/github/lu-zero/pseudoroot/status.svg)](https://deps.rs/repo/github/lu-zero/pseudoroot)
 
@@ -246,7 +246,7 @@ cargo fmt --check
 
 ## License
 
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).
+Licensed under [MIT](LICENSE-MIT).
 
 ## Contributing
 

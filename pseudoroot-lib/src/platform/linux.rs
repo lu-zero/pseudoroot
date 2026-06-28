@@ -3,7 +3,6 @@
 //! This module provides Linux-specific implementations using `dlsym(RTLD_NEXT)`
 //! to call the real system functions.
 
-use super::PlatformHelper;
 use std::os::raw::c_char;
 use std::sync::OnceLock;
 
@@ -294,7 +293,7 @@ unsafe fn get_next_function<T>(symbol: &[u8]) -> T {
 /// Linux platform helper implementation
 pub struct LinuxHelper;
 
-impl PlatformHelper for LinuxHelper {
+impl LinuxHelper {
     unsafe fn real_stat(path: *const c_char, buf: *mut libc::stat) -> i32 {
         if let Some(func) = REAL_STAT.get() {
             func(path, buf)

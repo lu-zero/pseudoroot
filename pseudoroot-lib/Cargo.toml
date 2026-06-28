@@ -12,11 +12,4 @@ crate-type = ["cdylib"]
 [dependencies]
 pseudoroot-core.workspace = true
 ctor = "0.2"
-rustix = { version = "0.38", features = ["fs", "process", "system"] }
 libc = "0.2"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-# Linux-specific dependencies if needed
-
-[target.'cfg(target_os = "macos")'.dependencies]
-# macOS-specific dependencies if needed

@@ -15,12 +15,8 @@ pub const DEFAULT_SOCKET_PATH: &str = "/tmp/pseudoroot.sock";
 /// Message types for IPC communication
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MessageType {
-    /// Register a file with fake ownership
+    /// Register fake ownership for a path
     RegisterOwnership,
-    /// Unregister a file
-    UnregisterOwnership,
-    /// Query ownership for a file
-    QueryOwnership,
     /// Set current UID/GID
     SetCurrentUidGid,
     /// Get current UID/GID
@@ -99,7 +95,6 @@ impl ProtocolMessage {
     }
 
     /// Deserialize a message from bytes
-    #[allow(dead_code)]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         bincode::deserialize(bytes).ok()
     }

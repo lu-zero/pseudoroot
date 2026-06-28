@@ -72,8 +72,48 @@ unsafe fn init() {
     }
 }
 
-// Re-export the platform module for conditional compilation
 pub use platform::*;
+
+fn set_current_ids(uid: u32, gid: u32) -> i32 {
+    if daemon_mode_enabled() && daemon_set_current_uid_gid(uid, gid) {
+        return 0;
+    }
+    let mut state = global_state_write();
+    state.set_current(uid, gid);
+    0
+}
+
+fn record_ownership(path: String, ownership: FileOwnership) {
+    if daemon_mode_enabled() {
+        let _ = daemon_set_ownership(path, ownership);
+        return;
+    }
+    let mut state = global_state_write();
+    state.set_ownership(path, ownership);
+}
+
+fn remove_tracked_ownership(path: &str) {
+    if daemon_mode_enabled() {
+        let _ = daemon_remove_ownership(path);
+        return;
+    }
+    let mut state = global_state_write();
+    state.remove_ownership(path);
+}
+
+fn rename_tracked_ownership(old_path: String, new_path: String) {
+    if daemon_mode_enabled() {
+        if let Some(ownership) = daemon_get_ownership(&old_path) {
+            let _ = daemon_set_ownership(new_path, ownership);
+            let _ = daemon_remove_ownership(&old_path);
+        }
+        return;
+    }
+    let mut state = global_state_write();
+    if let Some(ownership) = state.remove_ownership(&old_path) {
+        state.set_ownership(new_path, ownership);
+    }
+}
 
 /// Get the current fake UID
 ///
@@ -176,129 +216,49 @@ pub extern "C" fn getresgid(rgid: *mut u32, egid: *mut u32, sgid: *mut u32) -> i
 /// Set real user ID - always succeeds in fake mode
 #[unsafe(no_mangle)]
 pub extern "C" fn setuid(uid: u32) -> i32 {
-    // In fake mode, we just record this as the current UID
-    if daemon_mode_enabled() {
-        let gid = getgid(); // Get current GID (might be from daemon)
-        if daemon_set_current_uid_gid(uid, gid) {
-            return 0;
-        }
-    }
-    let mut state = global_state_write();
-    let gid = state.current_gid();
-    state.set_current(uid, gid);
-    0
+    set_current_ids(uid, getgid())
 }
 
 /// Set real group ID - always succeeds in fake mode
 #[unsafe(no_mangle)]
 pub extern "C" fn setgid(gid: u32) -> i32 {
-    // In fake mode, we just record this as the current GID
-    if daemon_mode_enabled() {
-        let uid = getuid(); // Get current UID (might be from daemon)
-        if daemon_set_current_uid_gid(uid, gid) {
-            return 0;
-        }
-    }
-    let mut state = global_state_write();
-    let uid = state.current_uid();
-    state.set_current(uid, gid);
-    0
+    set_current_ids(getuid(), gid)
 }
 
 /// Set real and effective user IDs
 #[unsafe(no_mangle)]
 pub extern "C" fn setreuid(_ruid: u32, euid: u32) -> i32 {
-    // In fake mode, we just record this as the current UID
-    if daemon_mode_enabled() {
-        let gid = getgid();
-        if daemon_set_current_uid_gid(euid, gid) {
-            return 0;
-        }
-    }
-    let mut state = global_state_write();
-    let gid = state.current_gid();
-    state.set_current(euid, gid);
-    0
+    set_current_ids(euid, getgid())
 }
 
 /// Set real and effective group IDs
 #[unsafe(no_mangle)]
 pub extern "C" fn setregid(_rgid: u32, egid: u32) -> i32 {
-    // In fake mode, we just record this as the current GID
-    if daemon_mode_enabled() {
-        let uid = getuid();
-        if daemon_set_current_uid_gid(uid, egid) {
-            return 0;
-        }
-    }
-    let mut state = global_state_write();
-    let uid = state.current_uid();
-    state.set_current(uid, egid);
-    0
+    set_current_ids(getuid(), egid)
 }
 
 /// Set real, effective, and saved user IDs
 #[unsafe(no_mangle)]
 pub extern "C" fn setresuid(_ruid: u32, euid: u32, _suid: u32) -> i32 {
-    // In fake mode, we just record this as the current UID
-    if daemon_mode_enabled() {
-        let gid = getgid();
-        if daemon_set_current_uid_gid(euid, gid) {
-            return 0;
-        }
-    }
-    let mut state = global_state_write();
-    let gid = state.current_gid();
-    state.set_current(euid, gid);
-    0
+    set_current_ids(euid, getgid())
 }
 
 /// Set real, effective, and saved group IDs
 #[unsafe(no_mangle)]
 pub extern "C" fn setresgid(_rgid: u32, egid: u32, _sgid: u32) -> i32 {
-    // In fake mode, we just record this as the current GID
-    if daemon_mode_enabled() {
-        let uid = getuid();
-        if daemon_set_current_uid_gid(uid, egid) {
-            return 0;
-        }
-    }
-    let mut state = global_state_write();
-    let uid = state.current_uid();
-    state.set_current(uid, egid);
-    0
+    set_current_ids(getuid(), egid)
 }
 
 /// Set filesystem user ID
 #[unsafe(no_mangle)]
 pub extern "C" fn setfsuid(uid: u32) -> i32 {
-    // In fake mode, we just record this as the current UID
-    if daemon_mode_enabled() {
-        let gid = getgid();
-        if daemon_set_current_uid_gid(uid, gid) {
-            return 0;
-        }
-    }
-    let mut state = global_state_write();
-    let gid = state.current_gid();
-    state.set_current(uid, gid);
-    0
+    set_current_ids(uid, getgid())
 }
 
 /// Set filesystem group ID
 #[unsafe(no_mangle)]
 pub extern "C" fn setfsgid(gid: u32) -> i32 {
-    // In fake mode, we just record this as the current GID
-    if daemon_mode_enabled() {
-        let uid = getuid();
-        if daemon_set_current_uid_gid(uid, gid) {
-            return 0;
-        }
-    }
-    let mut state = global_state_write();
-    let uid = state.current_uid();
-    state.set_current(uid, gid);
-    0
+    set_current_ids(getuid(), gid)
 }
 
 /// Set file ownership
@@ -306,18 +266,10 @@ pub extern "C" fn setfsgid(gid: u32) -> i32 {
 /// This intercepts chown() to record ownership changes in our fake state.
 #[unsafe(no_mangle)]
 pub extern "C" fn chown(path: *const c_char, uid: u32, gid: u32) -> i32 {
-    // Try to record the ownership change in our fake state
     if let Some(path_str) = unsafe { cstr_to_string(path) } {
-        if daemon_mode_enabled() {
-            let _ = daemon_set_ownership(path_str, FileOwnership::new(uid, gid));
-        } else {
-            let mut state = global_state_write();
-            state.set_ownership(path_str, FileOwnership::new(uid, gid));
-        }
+        record_ownership(path_str, FileOwnership::new(uid, gid));
     }
 
-    // Also call the real chown to actually change the file system
-    // This allows the fake state to match the real state
     unsafe { platform::real_chown(path, uid, gid) }
 }
 
@@ -429,17 +381,10 @@ pub extern "C" fn fchmodat(dirfd: i32, path: *const c_char, mode: libc::mode_t, 
 /// Change file ownership by path (no symlink following)
 #[unsafe(no_mangle)]
 pub extern "C" fn lchown(path: *const c_char, uid: u32, gid: u32) -> i32 {
-    // Try to record the ownership change in our fake state
     if let Some(path_str) = unsafe { cstr_to_string(path) } {
-        if daemon_mode_enabled() {
-            let _ = daemon_set_ownership(path_str, FileOwnership::new(uid, gid));
-        } else {
-            let mut state = global_state_write();
-            state.set_ownership(path_str, FileOwnership::new(uid, gid));
-        }
+        record_ownership(path_str, FileOwnership::new(uid, gid));
     }
 
-    // Also call the real lchown to actually change the file system
     unsafe { platform::real_lchown(path, uid, gid) }
 }
 
@@ -454,24 +399,10 @@ pub extern "C" fn fchown(fd: i32, uid: u32, gid: u32) -> i32 {
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn fchownat(dirfd: i32, path: *const c_char, uid: u32, gid: u32, flags: i32) -> i32 {
-    // Try to record the ownership change in our fake state
     if let Some(path_str) = unsafe { cstr_to_string(path) } {
-        if daemon_mode_enabled() {
-            let _ = daemon_set_ownership(path_str, FileOwnership::new(uid, gid));
-        } else {
-            let mut state = global_state_write();
-            if flags == libc::AT_FDCWD || dirfd == libc::AT_FDCWD {
-                // Relative to current directory
-                state.set_ownership(path_str, FileOwnership::new(uid, gid));
-            } else {
-                // For now, we can't easily resolve dirfd+path to a full path
-                // Just record the path component (won't match on stat, but better than nothing)
-                state.set_ownership(path_str, FileOwnership::new(uid, gid));
-            }
-        }
+        record_ownership(path_str, FileOwnership::new(uid, gid));
     }
 
-    // Also call the real fchownat
     unsafe { platform::real_fchownat(dirfd, path, uid, gid, flags) }
 }
 
@@ -540,17 +471,10 @@ pub unsafe fn cstr_to_string(cstr: *const c_char) -> Option<String> {
 /// Remove directory entry (delete file)
 #[unsafe(no_mangle)]
 pub extern "C" fn unlink(path: *const c_char) -> i32 {
-    // First, remove the ownership entry from our fake state
     if let Some(path_str) = unsafe { cstr_to_string(path) } {
-        if daemon_mode_enabled() {
-            let _ = daemon_remove_ownership(&path_str);
-        } else {
-            let mut state = global_state_write();
-            state.remove_ownership(&path_str);
-        }
+        remove_tracked_ownership(&path_str);
     }
 
-    // Then call the real unlink
     unsafe { platform::real_unlink(path) }
 }
 
@@ -558,66 +482,32 @@ pub extern "C" fn unlink(path: *const c_char) -> i32 {
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn unlinkat(dirfd: i32, path: *const c_char, flags: i32) -> i32 {
-    // First, remove the ownership entry from our fake state
     if let Some(path_str) = unsafe { cstr_to_string(path) } {
-        if daemon_mode_enabled() {
-            let _ = daemon_remove_ownership(&path_str);
-        } else {
-            let mut state = global_state_write();
-            if flags == libc::AT_FDCWD || dirfd == libc::AT_FDCWD {
-                // Relative to current directory
-                state.remove_ownership(&path_str);
-            } else {
-                // For now, we can't easily resolve dirfd+path to a full path
-                // Just try to remove by the path component
-                state.remove_ownership(&path_str);
-            }
-        }
+        remove_tracked_ownership(&path_str);
     }
 
-    // Then call the real unlinkat
     unsafe { platform::real_unlinkat(dirfd, path, flags) }
 }
 
 /// Remove directory
 #[unsafe(no_mangle)]
 pub extern "C" fn rmdir(path: *const c_char) -> i32 {
-    // First, remove the ownership entry from our fake state
     if let Some(path_str) = unsafe { cstr_to_string(path) } {
-        if daemon_mode_enabled() {
-            let _ = daemon_remove_ownership(&path_str);
-        } else {
-            let mut state = global_state_write();
-            state.remove_ownership(&path_str);
-        }
+        remove_tracked_ownership(&path_str);
     }
 
-    // Then call the real rmdir
     unsafe { platform::real_rmdir(path) }
 }
 
 /// Rename a file
 #[unsafe(no_mangle)]
 pub extern "C" fn rename(oldpath: *const c_char, newpath: *const c_char) -> i32 {
-    // Move the ownership entry from old path to new path in our fake state
     if let (Some(old_str), Some(new_str)) = (unsafe { cstr_to_string(oldpath) }, unsafe {
         cstr_to_string(newpath)
     }) {
-        if daemon_mode_enabled() {
-            // For daemon mode, we need to get the ownership from daemon and set it for new path
-            if let Some(ownership) = daemon_get_ownership(&old_str) {
-                let _ = daemon_set_ownership(new_str, ownership);
-                let _ = daemon_remove_ownership(&old_str);
-            }
-        } else {
-            let mut state = global_state_write();
-            if let Some(ownership) = state.remove_ownership(&old_str) {
-                state.set_ownership(new_str, ownership);
-            }
-        }
+        rename_tracked_ownership(old_str, new_str);
     }
 
-    // Then call the real rename
     unsafe { platform::real_rename(oldpath, newpath) }
 }
 
@@ -630,30 +520,14 @@ pub extern "C" fn renameat(
     newdirfd: i32,
     newpath: *const c_char,
 ) -> i32 {
-    // Move the ownership entry from old path to new path in our fake state
     if olddirfd == libc::AT_FDCWD && newdirfd == libc::AT_FDCWD {
-        // Both relative to current directory
         if let (Some(old_str), Some(new_str)) = (unsafe { cstr_to_string(oldpath) }, unsafe {
             cstr_to_string(newpath)
         }) {
-            if daemon_mode_enabled() {
-                // For daemon mode, we need to get the ownership from daemon and set it for new path
-                if let Some(ownership) = daemon_get_ownership(&old_str) {
-                    let _ = daemon_set_ownership(new_str, ownership);
-                    let _ = daemon_remove_ownership(&old_str);
-                }
-            } else {
-                let mut state = global_state_write();
-                if let Some(ownership) = state.remove_ownership(&old_str) {
-                    state.set_ownership(new_str, ownership);
-                }
-            }
+            rename_tracked_ownership(old_str, new_str);
         }
     }
-    // For other cases with dirfd != AT_FDCWD, we can't easily resolve the full path
-    // so we just pass through without tracking ownership
 
-    // Then call the real renameat
     unsafe { platform::real_renameat(olddirfd, oldpath, newdirfd, newpath) }
 }
 
@@ -667,30 +541,14 @@ pub extern "C" fn renameat2(
     newpath: *const c_char,
     flags: u32,
 ) -> i32 {
-    // Move the ownership entry from old path to new path in our fake state
     if olddirfd == libc::AT_FDCWD && newdirfd == libc::AT_FDCWD {
-        // Both relative to current directory
         if let (Some(old_str), Some(new_str)) = (unsafe { cstr_to_string(oldpath) }, unsafe {
             cstr_to_string(newpath)
         }) {
-            if daemon_mode_enabled() {
-                // For daemon mode, we need to get the ownership from daemon and set it for new path
-                if let Some(ownership) = daemon_get_ownership(&old_str) {
-                    let _ = daemon_set_ownership(new_str, ownership);
-                    let _ = daemon_remove_ownership(&old_str);
-                }
-            } else {
-                let mut state = global_state_write();
-                if let Some(ownership) = state.remove_ownership(&old_str) {
-                    state.set_ownership(new_str, ownership);
-                }
-            }
+            rename_tracked_ownership(old_str, new_str);
         }
     }
-    // For other cases with dirfd != AT_FDCWD, we can't easily resolve the full path
-    // so we just pass through without tracking ownership
 
-    // Then call the real renameat2
     unsafe { platform::real_renameat2(olddirfd, oldpath, newdirfd, newpath, flags) }
 }
 
@@ -698,22 +556,10 @@ pub extern "C" fn renameat2(
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn mknod(pathname: *const c_char, mode: libc::mode_t, dev: libc::dev_t) -> i32 {
-    // Get current UID/GID first, then record ownership
-    let current_uid = getuid();
-    let current_gid = getgid();
-
-    // Try to record the ownership for the new file in our fake state
     if let Some(path_str) = unsafe { cstr_to_string(pathname) } {
-        if daemon_mode_enabled() {
-            let _ = daemon_set_ownership(path_str, FileOwnership::new(current_uid, current_gid));
-        } else {
-            let mut state_mut = global_state_write();
-            // Set ownership to current fake UID/GID
-            state_mut.set_ownership(path_str, FileOwnership::new(current_uid, current_gid));
-        }
+        record_ownership(path_str, FileOwnership::new(getuid(), getgid()));
     }
 
-    // Then call the real mknod
     unsafe { platform::real_mknod(pathname, mode, dev) }
 }
 
@@ -726,22 +572,10 @@ pub extern "C" fn mknodat(
     mode: libc::mode_t,
     dev: libc::dev_t,
 ) -> i32 {
-    // Get current UID/GID first, then record ownership
-    let current_uid = getuid();
-    let current_gid = getgid();
-
-    // Try to record the ownership for the new file in our fake state
     if let Some(path_str) = unsafe { cstr_to_string(pathname) } {
-        if daemon_mode_enabled() {
-            let _ = daemon_set_ownership(path_str, FileOwnership::new(current_uid, current_gid));
-        } else {
-            let mut state_mut = global_state_write();
-            // Set ownership to current fake UID/GID
-            state_mut.set_ownership(path_str, FileOwnership::new(current_uid, current_gid));
-        }
+        record_ownership(path_str, FileOwnership::new(getuid(), getgid()));
     }
 
-    // Then call the real mknodat
     unsafe { platform::real_mknodat(dirfd, pathname, mode, dev) }
 }
 

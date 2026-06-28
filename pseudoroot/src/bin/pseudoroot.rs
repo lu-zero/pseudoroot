@@ -17,7 +17,6 @@ use pseudoroot_core::protocol::DEFAULT_SOCKET_PATH;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process;
@@ -226,45 +225,45 @@ fn main() {
 
 /// Start the pseudoroot daemon
 fn start_daemon(socket_path: Option<String>, uid: u32, gid: u32, verbose: bool, cleanup: bool) {
-    use std::os::unix::net::UnixListener;
-
-    let socket_path = PathBuf::from(socket_path.unwrap_or_else(|| DEFAULT_SOCKET_PATH.to_string()));
-
-    // Clean up any existing socket
-    let _ = fs::remove_file(&socket_path);
-
-    // Create the socket listener
-    let _listener = match UnixListener::bind(&socket_path) {
-        Ok(listener) => listener,
-        Err(e) => {
-            eprintln!(
-                "Error: Failed to bind to socket {}: {}",
-                socket_path.display(),
-                e
-            );
+    let daemon_bin = match find_daemon_path() {
+        Some(path) => path,
+        None => {
+            eprintln!("Error: Could not find pseudoroot-daemon binary.");
+            eprintln!("Build it first with: cargo build -p pseudoroot-daemon");
             process::exit(1);
         }
     };
 
-    // Set permissions on the socket
-    if let Err(e) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666)) {
-        eprintln!("Warning: Failed to set socket permissions: {}", e);
-    }
+    let socket = socket_path.unwrap_or_else(|| DEFAULT_SOCKET_PATH.to_string());
+    let mut command = process::Command::new(daemon_bin);
+    command
+        .arg("--socket-path")
+        .arg(socket)
+        .arg("--uid")
+        .arg(uid.to_string())
+        .arg("--gid")
+        .arg(gid.to_string());
 
     if verbose {
-        println!("pseudoroot-daemon: Listening on {}", socket_path.display());
-        println!("pseudoroot-daemon: Initial UID={}, GID={}", uid, gid);
-        println!("Press Ctrl+C to stop");
+        command.arg("--verbose");
+    }
+    if cleanup {
+        command.arg("--cleanup");
     }
 
-    // Note: In a real implementation, we would run the daemon in a separate process
-    // For now, we just print a message and exit
-    // The actual daemon should be started separately with pseudoroot-daemon
-    eprintln!("Note: To start the actual daemon, run: pseudoroot-daemon --socket-path {} --uid {} --gid {}", 
-             socket_path.display(), uid, gid);
-    if cleanup {
-        let _ = fs::remove_file(&socket_path);
-    }
+    command.stdin(process::Stdio::inherit());
+    command.stdout(process::Stdio::inherit());
+    command.stderr(process::Stdio::inherit());
+
+    let status = match command.status() {
+        Ok(status) => status,
+        Err(e) => {
+            eprintln!("Error: Failed to start daemon: {}", e);
+            process::exit(1);
+        }
+    };
+
+    process::exit(status.code().unwrap_or(1));
 }
 
 /// Stop the pseudoroot daemon by sending a shutdown signal
@@ -298,6 +297,30 @@ fn check_daemon_status(socket_path: Option<String>) {
             process::exit(1);
         }
     }
+}
+
+/// Find the path to the pseudoroot-daemon binary
+fn find_daemon_path() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(exe_path) = env::current_exe() {
+        let exe_dir = exe_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("/"));
+        candidates.push(exe_dir.join("pseudoroot-daemon"));
+        candidates.push(exe_dir.join("../pseudoroot-daemon"));
+    }
+
+    candidates.extend(
+        [
+            "target/debug/pseudoroot-daemon",
+            "target/release/pseudoroot-daemon",
+        ]
+        .iter()
+        .map(PathBuf::from),
+    );
+
+    candidates.into_iter().find(|candidate| candidate.exists())
 }
 
 /// Find the path to the pseudoroot library

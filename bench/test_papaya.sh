@@ -19,12 +19,12 @@ echo ""
 
 # Test DashMap
 echo "Testing with DashMap..."
-sed -i 's/.*dashmap.*//' crates/pseudoroot-core/Cargo.toml
-sed -i '/\[dependencies\]/a dashmap = "5.5"' crates/pseudoroot-core/Cargo.toml
-sed -i 's/use .*//' crates/pseudoroot-core/src/state.rs
-sed -i '/use std::collections::HashMap;/a use dashmap::DashMap;' crates/pseudoroot-core/src/state.rs
-sed -i 's/ownership_map: .*/ownership_map: DashMap<String, FileOwnership>,' crates/pseudoroot-core/src/state.rs
-sed -i 's/ownership_map: .*/ownership_map: DashMap::new(),/' crates/pseudoroot-core/src/state.rs
+sed -i 's/.*dashmap.*//' pseudoroot-core/Cargo.toml
+sed -i '/\[dependencies\]/a dashmap = "5.5"' pseudoroot-core/Cargo.toml
+sed -i 's/use .*//' pseudoroot-core/src/state.rs
+sed -i '/use std::collections::HashMap;/a use dashmap::DashMap;' pseudoroot-core/src/state.rs
+sed -i 's/ownership_map: .*/ownership_map: DashMap<String, FileOwnership>,' pseudoroot-core/src/state.rs
+sed -i 's/ownership_map: .*/ownership_map: DashMap::new(),/' pseudoroot-core/src/state.rs
 
 cargo build --release -q -p pseudoroot-core -p pseudoroot-lib -p pseudoroot
 
@@ -33,13 +33,13 @@ echo "DashMap: $DASHMAP_RATE stats/s"
 
 # Test Papaya
 echo "Testing with Papaya..."
-sed -i 's/dashmap = "5.5"/papaya = "0.2"/' crates/pseudoroot-core/Cargo.toml
-sed -i 's/use dashmap::DashMap;/use papaya::HashMap as PapayaHashMap;/' crates/pseudoroot-core/src/state.rs
-sed -i 's/ownership_map: DashMap<String, FileOwnership>/ownership_map: PapayaHashMap<String, FileOwnership>/' crates/pseudoroot-core/src/state.rs
-sed -i 's/ownership_map: DashMap::new()/ownership_map: PapayaHashMap::new()/' crates/pseudoroot-core/src/state.rs
-sed -i 's/self.ownership_map.insert(path, ownership);/self.ownership_map.pin().insert(path, ownership);/' crates/pseudoroot-core/src/state.rs
-sed -i 's/self.ownership_map.get(path).map(|entry| \*entry.value())/self.ownership_map.pin().get(path).copied()/' crates/pseudoroot-core/src/state.rs
-sed -i 's/self.ownership_map.remove(path).map(|(_, v)| v)/self.ownership_map.pin().remove(path).copied()/' crates/pseudoroot-core/src/state.rs
+sed -i 's/dashmap = "5.5"/papaya = "0.2"/' pseudoroot-core/Cargo.toml
+sed -i 's/use dashmap::DashMap;/use papaya::HashMap as PapayaHashMap;/' pseudoroot-core/src/state.rs
+sed -i 's/ownership_map: DashMap<String, FileOwnership>/ownership_map: PapayaHashMap<String, FileOwnership>/' pseudoroot-core/src/state.rs
+sed -i 's/ownership_map: DashMap::new()/ownership_map: PapayaHashMap::new()/' pseudoroot-core/src/state.rs
+sed -i 's/self.ownership_map.insert(path, ownership);/self.ownership_map.pin().insert(path, ownership);/' pseudoroot-core/src/state.rs
+sed -i 's/self.ownership_map.get(path).map(|entry| \*entry.value())/self.ownership_map.pin().get(path).copied()/' pseudoroot-core/src/state.rs
+sed -i 's/self.ownership_map.remove(path).map(|(_, v)| v)/self.ownership_map.pin().remove(path).copied()/' pseudoroot-core/src/state.rs
 
 cargo build --release -q -p pseudoroot-core -p pseudoroot-lib -p pseudoroot
 
@@ -47,7 +47,7 @@ PAPAYA_RATE=$(./target/release/pseudoroot run --uid 0 --gid 0 ./target/release/s
 echo "Papaya:  $PAPAYA_RATE stats/s"
 
 # Restore DashMap
-git checkout crates/pseudoroot-core/Cargo.toml crates/pseudoroot-core/src/state.rs
+git checkout pseudoroot-core/Cargo.toml pseudoroot-core/src/state.rs
 cargo build --release -q -p pseudoroot-core -p pseudoroot-lib -p pseudoroot
 
 echo ""

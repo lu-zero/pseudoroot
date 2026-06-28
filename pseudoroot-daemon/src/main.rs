@@ -22,8 +22,8 @@
 
 use clap::Parser;
 use pseudoroot_core::protocol::{
-    IpcPayload, MessageType, OwnershipResult, PathPayload, ProtocolMessage, UidGidPayload,
-    DEFAULT_SOCKET_PATH,
+    IpcPayload, MessageType, OwnershipPayload, OwnershipResult, PathPayload, ProtocolMessage,
+    UidGidPayload, DEFAULT_SOCKET_PATH,
 };
 use pseudoroot_core::state::FakeRootState;
 use std::fs;
@@ -159,10 +159,18 @@ fn handle_client(mut stream: UnixStream, state: Arc<RwLock<FakeRootState>>, verb
                 }
             }
             MessageType::RegisterOwnership => {
-                // Deprecated, use SetCurrentUidGid
-                ProtocolMessage::error(message.request_id, "Deprecated message type")
+                if let Some(payload) = OwnershipPayload::from_payload(&message.payload) {
+                    let mut state = state.write().unwrap();
+                    state.set_ownership(
+                        payload.path,
+                        pseudoroot_core::state::FileOwnership::new(payload.uid, payload.gid),
+                    );
+                    ProtocolMessage::response(message.request_id, vec![])
+                } else {
+                    ProtocolMessage::error(message.request_id, "Invalid OwnershipPayload")
+                }
             }
-            MessageType::QueryOwnership | MessageType::GetOwnership => {
+            MessageType::GetOwnership => {
                 if let Some(payload) = PathPayload::from_payload(&message.payload) {
                     let state = state.read().unwrap();
                     if let Some(ownership) = state.get_ownership(&payload.path) {
@@ -183,7 +191,7 @@ fn handle_client(mut stream: UnixStream, state: Arc<RwLock<FakeRootState>>, verb
                     ProtocolMessage::error(message.request_id, "Invalid PathPayload")
                 }
             }
-            MessageType::UnregisterOwnership | MessageType::RemoveOwnership => {
+            MessageType::RemoveOwnership => {
                 if let Some(payload) = PathPayload::from_payload(&message.payload) {
                     let mut state = state.write().unwrap();
                     state.remove_ownership(&payload.path);

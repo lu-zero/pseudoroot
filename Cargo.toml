@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "crates/pseudoroot-core",
-    "crates/pseudoroot-lib",
-    "crates/pseudoroot-daemon",
-    "crates/pseudoroot",
-    "crates/pseudoroot-tests",
+    "pseudoroot-core",
+    "pseudoroot-lib",
+    "pseudoroot-daemon",
+    "pseudoroot",
+    "pseudoroot-tests",
     "bench/stat-loop",
 ]
 resolver = "2"
@@ -12,14 +12,9 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 authors = ["Luca Barbato <lu_zero@gentoo.org>"]
 repository = "https://github.com/lu-zero/pseudoroot"
 
 [workspace.dependencies]
-pseudoroot-core = { version = "0.1.0", path = "crates/pseudoroot-core" }
-
-# Recommended crates
-ctor = "0.2"
-rustix = { version = "0.38", features = ["fs", "process", "system"] }
-libc = "0.2"
+pseudoroot-core = { version = "0.1.0", path = "pseudoroot-core" }

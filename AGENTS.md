@@ -15,19 +15,20 @@ cargo msrv verify                  # Verifies the rust-version declared in Cargo
 
 ## Architecture
 
-- Workspace with multiple crates: `pseudoroot-core`, `pseudoroot-lib`, `pseudoroot-daemon`, `pseudoroot`
+Workspace crates live at the repository root:
+
 - `pseudoroot-core` — shared types, state management, and IPC protocol
 - `pseudoroot-lib` — cdylib that intercepts system calls via library interposition
-- `pseudoroot-daemon` — optional future daemon for persistent state (stub)
+- `pseudoroot-daemon` — daemon for persistent state across processes
 - `pseudoroot` — CLI binary that preloads the library and executes commands
+- `pseudoroot-tests` — integration and interposition tests
 
 Read the [design document](https://github.com/lu-zero/pseudoroot) for architecture reference.
 
 ## Dependencies
 
 - `ctor` — Library initialization for the cdylib
-- `rustix` — Modern safe alternative to libc for syscalls
-- `libc` — Used minimally for `dlsym(RTLD_NEXT)` to call real implementations
+- `libc` — Used for `dlsym(RTLD_NEXT)` and libc type definitions
 - `clap` — CLI argument parsing
 
 ## Coding Style

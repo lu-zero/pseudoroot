@@ -56,8 +56,8 @@ run_benchmark() {
 # Test 1: HashMap + RwLock (current implementation in state.rs)
 echo "Switching to HashMap + RwLock..."
 patch -p1 << 'EOF' || true
---- a/crates/pseudoroot-core/src/state.rs
-+++ b/crates/pseudoroot-core/src/state.rs
+--- a/pseudoroot-core/src/state.rs
++++ b/pseudoroot-core/src/state.rs
 @@ -1,7 +1,6 @@
  //! Fake root state management
  //!
@@ -106,38 +106,38 @@ EOF
 run_benchmark "DashMap"
 
 # Test with Papaya
-sed -i 's/dashmap = "5.5"/papaya = "0.2"/' crates/pseudoroot-core/Cargo.toml
-sed -i 's/use dashmap::DashMap;/use papaya::HashMap as PapayaHashMap;/' crates/pseudoroot-core/src/state.rs
-sed -i 's/ownership_map: DashMap<String, FileOwnership>/ownership_map: PapayaHashMap<String, FileOwnership>/' crates/pseudoroot-core/src/state.rs
-sed -i 's/ownership_map: DashMap::new()/ownership_map: PapayaHashMap::new()/' crates/pseudoroot-core/src/state.rs
-sed -i 's/self.ownership_map.insert(path, ownership);/self.ownership_map.pin().insert(path, ownership);/' crates/pseudoroot-core/src/state.rs
-sed -i 's/self.ownership_map.get(path).map(|entry| \*entry.value())/self.ownership_map.pin().get(path).copied()/' crates/pseudoroot-core/src/state.rs
-sed -i 's/self.ownership_map.remove(path).map(|(_, v)| v)/self.ownership_map.pin().remove(path).copied()/' crates/pseudoroot-core/src/state.rs
+sed -i 's/dashmap = "5.5"/papaya = "0.2"/' pseudoroot-core/Cargo.toml
+sed -i 's/use dashmap::DashMap;/use papaya::HashMap as PapayaHashMap;/' pseudoroot-core/src/state.rs
+sed -i 's/ownership_map: DashMap<String, FileOwnership>/ownership_map: PapayaHashMap<String, FileOwnership>/' pseudoroot-core/src/state.rs
+sed -i 's/ownership_map: DashMap::new()/ownership_map: PapayaHashMap::new()/' pseudoroot-core/src/state.rs
+sed -i 's/self.ownership_map.insert(path, ownership);/self.ownership_map.pin().insert(path, ownership);/' pseudoroot-core/src/state.rs
+sed -i 's/self.ownership_map.get(path).map(|entry| \*entry.value())/self.ownership_map.pin().get(path).copied()/' pseudoroot-core/src/state.rs
+sed -i 's/self.ownership_map.remove(path).map(|(_, v)| v)/self.ownership_map.pin().remove(path).copied()/' pseudoroot-core/src/state.rs
 
 run_benchmark "Papaya"
 
 # Test with RwLock + HashMap
-sed -i 's/papaya = "0.2"/dashmap = "5.5"/' crates/pseudoroot-core/Cargo.toml  # First revert to dashmap
-sed -i 's/use papaya::HashMap as PapayaHashMap;/use dashmap::DashMap;/' crates/pseudoroot-core/src/state.rs
+sed -i 's/papaya = "0.2"/dashmap = "5.5"/' pseudoroot-core/Cargo.toml  # First revert to dashmap
+sed -i 's/use papaya::HashMap as PapayaHashMap;/use dashmap::DashMap;/' pseudoroot-core/src/state.rs
 # Now switch to RwLock + HashMap
-sed -i 's/dashmap = "5.5"/# dashmap = "5.5"/' crates/pseudoroot-core/Cargo.toml
-sed -i 's/use dashmap::DashMap;/use std::sync::RwLock;/' crates/pseudoroot-core/src/state.rs
-sed -i 's/ownership_map: PapayaHashMap<String, FileOwnership>/ownership_map: RwLock<HashMap<String, FileOwnership>>/' crates/pseudoroot-core/src/state.rs
-sed -i 's/ownership_map: PapayaHashMap::new()/ownership_map: RwLock::new(HashMap::new())/' crates/pseudoroot-core/src/state.rs
-sed -i 's/self.ownership_map.pin().insert(path, ownership);/self.ownership_map.write().unwrap().insert(path, ownership);/' crates/pseudoroot-core/src/state.rs
-sed -i 's/self.ownership_map.pin().get(path).copied()/self.ownership_map.read().unwrap().get(path).copied()/' crates/pseudoroot-core/src/state.rs
-sed -i 's/self.ownership_map.pin().remove(path).copied()/self.ownership_map.write().unwrap().remove(path)/' crates/pseudoroot-core/src/state.rs
+sed -i 's/dashmap = "5.5"/# dashmap = "5.5"/' pseudoroot-core/Cargo.toml
+sed -i 's/use dashmap::DashMap;/use std::sync::RwLock;/' pseudoroot-core/src/state.rs
+sed -i 's/ownership_map: PapayaHashMap<String, FileOwnership>/ownership_map: RwLock<HashMap<String, FileOwnership>>/' pseudoroot-core/src/state.rs
+sed -i 's/ownership_map: PapayaHashMap::new()/ownership_map: RwLock::new(HashMap::new())/' pseudoroot-core/src/state.rs
+sed -i 's/self.ownership_map.pin().insert(path, ownership);/self.ownership_map.write().unwrap().insert(path, ownership);/' pseudoroot-core/src/state.rs
+sed -i 's/self.ownership_map.pin().get(path).copied()/self.ownership_map.read().unwrap().get(path).copied()/' pseudoroot-core/src/state.rs
+sed -i 's/self.ownership_map.pin().remove(path).copied()/self.ownership_map.write().unwrap().remove(path)/' pseudoroot-core/src/state.rs
 
 run_benchmark "HashMap + RwLock"
 
 # Restore DashMap
-sed -i 's/# dashmap = "5.5"/dashmap = "5.5"/' crates/pseudoroot-core/Cargo.toml
-sed -i 's/use std::sync::RwLock;/use dashmap::DashMap;/' crates/pseudoroot-core/src/state.rs
-sed -i 's/ownership_map: RwLock<HashMap<String, FileOwnership>>/ownership_map: DashMap<String, FileOwnership>/' crates/pseudoroot-core/src/state.rs
-sed -i 's/ownership_map: RwLock::new(HashMap::new())/ownership_map: DashMap::new()/' crates/pseudoroot-core/src/state.rs
-sed -i 's/self.ownership_map.write().unwrap().insert(path, ownership);/self.ownership_map.insert(path, ownership);/' crates/pseudoroot-core/src/state.rs
-sed -i 's/self.ownership_map.read().unwrap().get(path).copied()/self.ownership_map.get(path).map(|entry| *entry.value())/' crates/pseudoroot-core/src/state.rs
-sed -i 's/self.ownership_map.write().unwrap().remove(path)/self.ownership_map.remove(path).map(|(_, v)| v)/' crates/pseudoroot-core/src/state.rs
+sed -i 's/# dashmap = "5.5"/dashmap = "5.5"/' pseudoroot-core/Cargo.toml
+sed -i 's/use std::sync::RwLock;/use dashmap::DashMap;/' pseudoroot-core/src/state.rs
+sed -i 's/ownership_map: RwLock<HashMap<String, FileOwnership>>/ownership_map: DashMap<String, FileOwnership>/' pseudoroot-core/src/state.rs
+sed -i 's/ownership_map: RwLock::new(HashMap::new())/ownership_map: DashMap::new()/' pseudoroot-core/src/state.rs
+sed -i 's/self.ownership_map.write().unwrap().insert(path, ownership);/self.ownership_map.insert(path, ownership);/' pseudoroot-core/src/state.rs
+sed -i 's/self.ownership_map.read().unwrap().get(path).copied()/self.ownership_map.get(path).map(|entry| *entry.value())/' pseudoroot-core/src/state.rs
+sed -i 's/self.ownership_map.write().unwrap().remove(path)/self.ownership_map.remove(path).map(|(_, v)| v)/' pseudoroot-core/src/state.rs
 
 echo "======================================"
 echo "Comparison Complete!"

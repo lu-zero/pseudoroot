@@ -101,11 +101,7 @@ impl UidGidMap {
 
 /// The global fake root state
 pub struct FakeRootState {
-    /// Mapping from real to fake UID/GID
-    pub uid_gid_map: UidGidMap,
-    /// Map from file path to its fake ownership (concurrent HashMap for better performance)
-    /// Note: This uses String keys for paths; in a daemon-based implementation,
-    /// this would be more sophisticated (inode-based, etc.)
+    /// Map from file path to its fake ownership
     pub ownership_map: DashMap<String, FileOwnership>,
     /// The current fake UID to report (atomic for lock-free reads)
     pub current_uid: AtomicU32,
@@ -116,7 +112,6 @@ pub struct FakeRootState {
 impl Default for FakeRootState {
     fn default() -> Self {
         Self {
-            uid_gid_map: UidGidMap::default(),
             ownership_map: DashMap::new(),
             current_uid: AtomicU32::new(0),
             current_gid: AtomicU32::new(0),
