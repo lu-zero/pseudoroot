@@ -16,7 +16,7 @@ n_stat_native="${1:-500000}"  # per-worker, native: large for stable timing
 n_stat_fake="${2:-20000}"     # per-worker, pseudoroot: small so the matrix finishes
 cores="$(nproc)"
 helper_manifest="$root/bench/stat-loop/Cargo.toml"
-helper="$root/bench/stat-loop/target/release/stat-loop"
+helper="$root/target/release/stat-loop"
 target="$root/target/release/pseudoroot"
 
 workers=()
@@ -40,9 +40,9 @@ for ((i = 0; i < 512; i++)); do echo "$i" > "$workdir/f$i"; done
 
 rate() { # <label> <workers>  -> prints rate
     case "$1" in
-        native)    "$helper"            "$n_stat_native" "$2" "$workdir" 2>&1 >/dev/null ;;
-        pseudoroot) "$target"            "$helper" "$n_stat_fake" "$2" "$workdir" 2>&1 >/dev/null ;;
-        fakeroot)  fakeroot -- "$helper" "$n_stat_fake" "$2" "$workdir" 2>&1 >/dev/null ;;
+        native)    "$helper"            "$n_stat_native" "$2" "$workdir" 2>&1 ;;
+        pseudoroot) "$target" run "$helper" "$n_stat_fake" "$2" "$workdir" 2>&1 ;;
+        fakeroot)  fakeroot -- "$helper" "$n_stat_fake" "$2" "$workdir" 2>&1 ;;
     esac | sed -n 's/.*rate=\([0-9.]*\).*/\1/p'
 }
 
