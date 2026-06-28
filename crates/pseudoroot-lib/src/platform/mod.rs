@@ -110,6 +110,42 @@ pub trait PlatformHelper {
 
     /// Get the real setfsgid function
     unsafe fn real_setfsgid(gid: u32) -> i32;
+
+    /// Get the real unlink function
+    unsafe fn real_unlink(path: *const std::os::raw::c_char) -> i32;
+
+    /// Get the real unlinkat function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_unlinkat(
+        dirfd: i32,
+        path: *const std::os::raw::c_char,
+        flags: i32,
+    ) -> i32;
+
+    /// Get the real rmdir function
+    unsafe fn real_rmdir(path: *const std::os::raw::c_char) -> i32;
+
+    /// Get the real rename function
+    unsafe fn real_rename(oldpath: *const std::os::raw::c_char, newpath: *const std::os::raw::c_char) -> i32;
+
+    /// Get the real renameat function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_renameat(
+        olddirfd: i32,
+        oldpath: *const std::os::raw::c_char,
+        newdirfd: i32,
+        newpath: *const std::os::raw::c_char,
+    ) -> i32;
+
+    /// Get the real renameat2 function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_renameat2(
+        olddirfd: i32,
+        oldpath: *const std::os::raw::c_char,
+        newdirfd: i32,
+        newpath: *const std::os::raw::c_char,
+        flags: u32,
+    ) -> i32;
 }
 
 #[cfg(target_os = "linux")]

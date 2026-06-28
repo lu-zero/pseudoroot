@@ -33,6 +33,12 @@ type SetresuidFn = unsafe extern "C" fn(u32, u32, u32) -> i32;
 type SetresgidFn = unsafe extern "C" fn(u32, u32, u32) -> i32;
 type SetfsuidFn = unsafe extern "C" fn(u32) -> i32;
 type SetfsgidFn = unsafe extern "C" fn(u32) -> i32;
+type UnlinkFn = unsafe extern "C" fn(*const c_char) -> i32;
+type UnlinkatFn = unsafe extern "C" fn(i32, *const c_char, i32) -> i32;
+type RmdirFn = unsafe extern "C" fn(*const c_char) -> i32;
+type RenameFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
+type RenameatFn = unsafe extern "C" fn(i32, *const c_char, i32, *const c_char) -> i32;
+type Renameat2Fn = unsafe extern "C" fn(i32, *const c_char, i32, *const c_char, u32) -> i32;
 
 // Use OnceLock for thread-safe lazy initialization
 static REAL_STAT: OnceLock<StatFn> = OnceLock::new();
@@ -60,6 +66,12 @@ static REAL_SETRESUID: OnceLock<SetresuidFn> = OnceLock::new();
 static REAL_SETRESGID: OnceLock<SetresgidFn> = OnceLock::new();
 static REAL_SETFSUID: OnceLock<SetfsuidFn> = OnceLock::new();
 static REAL_SETFSGID: OnceLock<SetfsgidFn> = OnceLock::new();
+    static REAL_UNLINK: OnceLock<UnlinkFn> = OnceLock::new();
+    static REAL_UNLINKAT: OnceLock<UnlinkatFn> = OnceLock::new();
+    static REAL_RMDIR: OnceLock<RmdirFn> = OnceLock::new();
+    static REAL_RENAME: OnceLock<RenameFn> = OnceLock::new();
+    static REAL_RENAMEAT: OnceLock<RenameatFn> = OnceLock::new();
+    static REAL_RENAMEAT2: OnceLock<Renameat2Fn> = OnceLock::new();
 
 /// Initialize the function pointers by looking up the real functions
 #[ctor::ctor]
@@ -90,6 +102,12 @@ fn init() {
         REAL_SETRESGID.set(get_next_function::<SetresgidFn>(b"setresgid\0")).ok();
         REAL_SETFSUID.set(get_next_function::<SetfsuidFn>(b"setfsuid\0")).ok();
         REAL_SETFSGID.set(get_next_function::<SetfsgidFn>(b"setfsgid\0")).ok();
+        REAL_UNLINK.set(get_next_function::<UnlinkFn>(b"unlink\0")).ok();
+        REAL_UNLINKAT.set(get_next_function::<UnlinkatFn>(b"unlinkat\0")).ok();
+        REAL_RMDIR.set(get_next_function::<RmdirFn>(b"rmdir\0")).ok();
+        REAL_RENAME.set(get_next_function::<RenameFn>(b"rename\0")).ok();
+        REAL_RENAMEAT.set(get_next_function::<RenameatFn>(b"renameat\0")).ok();
+        REAL_RENAMEAT2.set(get_next_function::<Renameat2Fn>(b"renameat2\0")).ok();
     }
 }
 
@@ -336,6 +354,57 @@ impl PlatformHelper for LinuxHelper {
             libc::setfsgid(gid)
         }
     }
+
+    unsafe fn real_unlink(path: *const c_char) -> i32 {
+        if let Some(func) = REAL_UNLINK.get() {
+            func(path)
+        } else {
+            libc::unlink(path)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_unlinkat(dirfd: i32, path: *const c_char, flags: i32) -> i32 {
+        if let Some(func) = REAL_UNLINKAT.get() {
+            func(dirfd, path, flags)
+        } else {
+            libc::unlinkat(dirfd, path, flags)
+        }
+    }
+
+    unsafe fn real_rmdir(path: *const c_char) -> i32 {
+        if let Some(func) = REAL_RMDIR.get() {
+            func(path)
+        } else {
+            libc::rmdir(path)
+        }
+    }
+
+    unsafe fn real_rename(oldpath: *const c_char, newpath: *const c_char) -> i32 {
+        if let Some(func) = REAL_RENAME.get() {
+            func(oldpath, newpath)
+        } else {
+            libc::rename(oldpath, newpath)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_renameat(olddirfd: i32, oldpath: *const c_char, newdirfd: i32, newpath: *const c_char) -> i32 {
+        if let Some(func) = REAL_RENAMEAT.get() {
+            func(olddirfd, oldpath, newdirfd, newpath)
+        } else {
+            libc::renameat(olddirfd, oldpath, newdirfd, newpath)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_renameat2(olddirfd: i32, oldpath: *const c_char, newdirfd: i32, newpath: *const c_char, flags: u32) -> i32 {
+        if let Some(func) = REAL_RENAMEAT2.get() {
+            func(olddirfd, oldpath, newdirfd, newpath, flags)
+        } else {
+            libc::renameat2(olddirfd, oldpath, newdirfd, newpath, flags)
+        }
+    }
 }
 
 // Re-export the functions for use in the main lib.rs
@@ -463,4 +532,31 @@ pub unsafe fn real_setfsuid(uid: u32) -> i32 {
 
 pub unsafe fn real_setfsgid(gid: u32) -> i32 {
     LinuxHelper::real_setfsgid(gid)
+}
+
+pub unsafe fn real_unlink(path: *const c_char) -> i32 {
+    LinuxHelper::real_unlink(path)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_unlinkat(dirfd: i32, path: *const c_char, flags: i32) -> i32 {
+    LinuxHelper::real_unlinkat(dirfd, path, flags)
+}
+
+pub unsafe fn real_rmdir(path: *const c_char) -> i32 {
+    LinuxHelper::real_rmdir(path)
+}
+
+pub unsafe fn real_rename(oldpath: *const c_char, newpath: *const c_char) -> i32 {
+    LinuxHelper::real_rename(oldpath, newpath)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_renameat(olddirfd: i32, oldpath: *const c_char, newdirfd: i32, newpath: *const c_char) -> i32 {
+    LinuxHelper::real_renameat(olddirfd, oldpath, newdirfd, newpath)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_renameat2(olddirfd: i32, oldpath: *const c_char, newdirfd: i32, newpath: *const c_char, flags: u32) -> i32 {
+    LinuxHelper::real_renameat2(olddirfd, oldpath, newdirfd, newpath, flags)
 }
