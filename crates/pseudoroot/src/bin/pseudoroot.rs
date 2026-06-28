@@ -159,7 +159,7 @@ fn main() {
                 // Append our library to the existing value
                 // On Linux, LD_PRELOAD uses colon-separated list
                 // On macOS, DYLD_INSERT_LIBRARIES also uses colon-separated list
-                let mut value = OsString::from(existing);
+                let mut value = existing;
                 value.push(":");
                 value.push(lib_path);
                 value
@@ -340,11 +340,5 @@ fn find_library_path() -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from),
     );
 
-    for candidate in candidates {
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-
-    None
+    candidates.into_iter().find(|candidate| candidate.exists())
 }
