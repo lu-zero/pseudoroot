@@ -27,8 +27,12 @@ Read the [design document](https://github.com/lu-zero/pseudoroot) for architectu
 
 ## Dependencies
 
+Shared crate dependencies live in `[workspace.dependencies]` in the root `Cargo.toml`.
+Member crates inherit package metadata via `field.workspace = true` and dependencies via
+`dep.workspace = true`. Run `cargo autoinherit --prefer-simple-dotted` after adding deps.
+
 - `ctor` — Library initialization for the cdylib
-- `libc` — Used for `dlsym(RTLD_NEXT)` and libc type definitions
+- `libc` — Used for `dlsym(RTLD_NEXT)` and libc type definitions (`pseudoroot-lib` only)
 - `clap` — CLI argument parsing
 
 ## Coding Style

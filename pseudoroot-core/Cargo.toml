@@ -7,6 +7,6 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-bincode = "1.3"
-serde = { version = "1.0", features = ["derive"] }
-dashmap = "5.5"  # Concurrent HashMap for better performance
+bincode.workspace = true
+dashmap.workspace = true
+serde.workspace = true

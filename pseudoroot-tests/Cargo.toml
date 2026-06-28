@@ -9,4 +9,3 @@ publish = false
 
 [dependencies]
 pseudoroot-core.workspace = true
-libc = "0.2"

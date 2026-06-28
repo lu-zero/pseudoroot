@@ -11,6 +11,5 @@ name = "pseudoroot"
 path = "src/bin/pseudoroot.rs"
 
 [dependencies]
+clap.workspace = true
 pseudoroot-core.workspace = true
-clap = { version = "4", features = ["derive"] }
-libc = "0.2"

@@ -10,6 +10,6 @@ repository.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+ctor.workspace = true
+libc.workspace = true
 pseudoroot-core.workspace = true
-ctor = "0.2"
-libc = "0.2"
