@@ -64,12 +64,28 @@ type MknodFn = unsafe extern "C" fn(*const c_char, libc::mode_t, libc::dev_t) ->
 type MknodatFn = unsafe extern "C" fn(i32, *const c_char, libc::mode_t, libc::dev_t) -> i32;
 
 // xattr functions
-type SetxattrFn = unsafe extern "C" fn(*const c_char, *const c_char, *const std::ffi::c_void, libc::size_t, i32) -> i32;
-type LsetxattrFn = unsafe extern "C" fn(*const c_char, *const c_char, *const std::ffi::c_void, libc::size_t, i32) -> i32;
-type FsetxattrFn = unsafe extern "C" fn(i32, *const c_char, *const std::ffi::c_void, libc::size_t, i32) -> i32;
-type GetxattrFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut std::ffi::c_void, libc::size_t) -> i32;
-type LgetxattrFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut std::ffi::c_void, libc::size_t) -> i32;
-type FgetxattrFn = unsafe extern "C" fn(i32, *const c_char, *mut std::ffi::c_void, libc::size_t) -> i32;
+type SetxattrFn = unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    *const std::ffi::c_void,
+    libc::size_t,
+    i32,
+) -> i32;
+type LsetxattrFn = unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    *const std::ffi::c_void,
+    libc::size_t,
+    i32,
+) -> i32;
+type FsetxattrFn =
+    unsafe extern "C" fn(i32, *const c_char, *const std::ffi::c_void, libc::size_t, i32) -> i32;
+type GetxattrFn =
+    unsafe extern "C" fn(*const c_char, *const c_char, *mut std::ffi::c_void, libc::size_t) -> i32;
+type LgetxattrFn =
+    unsafe extern "C" fn(*const c_char, *const c_char, *mut std::ffi::c_void, libc::size_t) -> i32;
+type FgetxattrFn =
+    unsafe extern "C" fn(i32, *const c_char, *mut std::ffi::c_void, libc::size_t) -> i32;
 type ListxattrFn = unsafe extern "C" fn(*const c_char, *mut c_char, libc::size_t) -> i32;
 type LlistxattrFn = unsafe extern "C" fn(*const c_char, *mut c_char, libc::size_t) -> i32;
 type FlistxattrFn = unsafe extern "C" fn(i32, *mut c_char, libc::size_t) -> i32;
@@ -132,53 +148,147 @@ static REAL_FREMOVEXATTR: OnceLock<FremovexattrFn> = OnceLock::new();
 fn init() {
     unsafe {
         REAL_STAT.set(get_next_function::<StatFn>(b"stat\0")).ok();
-        REAL_FSTAT.set(get_next_function::<FstatFn>(b"fstat\0")).ok();
-        REAL_LSTAT.set(get_next_function::<LstatFn>(b"lstat\0")).ok();
-        REAL_GETUID.set(get_next_function::<GetuidFn>(b"getuid\0")).ok();
-        REAL_GETEUID.set(get_next_function::<GeteuidFn>(b"geteuid\0")).ok();
-        REAL_GETGID.set(get_next_function::<GetgidFn>(b"getgid\0")).ok();
-        REAL_GETEGID.set(get_next_function::<GetegidFn>(b"getegid\0")).ok();
-        REAL_CHOWN.set(get_next_function::<ChownFn>(b"chown\0")).ok();
-        REAL_CHMOD.set(get_next_function::<ChmodFn>(b"chmod\0")).ok();
-        REAL_LCHOWN.set(get_next_function::<LchownFn>(b"lchown\0")).ok();
-        REAL_FCHOWN.set(get_next_function::<FchownFn>(b"fchown\0")).ok();
-        REAL_FCHOWNAT.set(get_next_function::<FchownatFn>(b"fchownat\0")).ok();
-        REAL_FSTATAT.set(get_next_function::<FstatatFn>(b"fstatat\0")).ok();
-        REAL_STATX.set(get_next_function::<StatxFn>(b"statx\0")).ok();
-        REAL_GETRESUID.set(get_next_function::<GetresuidFn>(b"getresuid\0")).ok();
-        REAL_GETRESGID.set(get_next_function::<GetresgidFn>(b"getresgid\0")).ok();
-        REAL_SETUID.set(get_next_function::<SetuidFn>(b"setuid\0")).ok();
-        REAL_SETGID.set(get_next_function::<SetgidFn>(b"setgid\0")).ok();
-        REAL_SETREUID.set(get_next_function::<SetreuidFn>(b"setreuid\0")).ok();
-        REAL_SETREGID.set(get_next_function::<SetregidFn>(b"setregid\0")).ok();
-        REAL_SETRESUID.set(get_next_function::<SetresuidFn>(b"setresuid\0")).ok();
-        REAL_SETRESGID.set(get_next_function::<SetresgidFn>(b"setresgid\0")).ok();
-        REAL_SETFSUID.set(get_next_function::<SetfsuidFn>(b"setfsuid\0")).ok();
-        REAL_SETFSGID.set(get_next_function::<SetfsgidFn>(b"setfsgid\0")).ok();
-        REAL_SETGROUPS.set(get_next_function::<SetgroupsFn>(b"setgroups\0")).ok();
-        REAL_CAPSET.set(get_next_function::<CapsetFn>(b"capset\0")).ok();
-        REAL_FCHMOD.set(get_next_function::<FchmodFn>(b"fchmod\0")).ok();
-        REAL_FCHMODAT.set(get_next_function::<FchmodatFn>(b"fchmodat\0")).ok();
-        REAL_UNLINK.set(get_next_function::<UnlinkFn>(b"unlink\0")).ok();
-        REAL_UNLINKAT.set(get_next_function::<UnlinkatFn>(b"unlinkat\0")).ok();
-        REAL_RMDIR.set(get_next_function::<RmdirFn>(b"rmdir\0")).ok();
-        REAL_RENAME.set(get_next_function::<RenameFn>(b"rename\0")).ok();
-        REAL_RENAMEAT.set(get_next_function::<RenameatFn>(b"renameat\0")).ok();
-        REAL_RENAMEAT2.set(get_next_function::<Renameat2Fn>(b"renameat2\0")).ok();
-        REAL_MKNOD.set(get_next_function::<MknodFn>(b"mknod\0")).ok();
-        REAL_MKNODAT.set(get_next_function::<MknodatFn>(b"mknodat\0")).ok();
-        REAL_SETXATTR.set(get_next_function::<SetxattrFn>(b"setxattr\0")).ok();
-        REAL_LSETXATTR.set(get_next_function::<LsetxattrFn>(b"lsetxattr\0")).ok();
-        REAL_FSETXATTR.set(get_next_function::<FsetxattrFn>(b"fsetxattr\0")).ok();
-        REAL_GETXATTR.set(get_next_function::<GetxattrFn>(b"getxattr\0")).ok();
-        REAL_LGETXATTR.set(get_next_function::<LgetxattrFn>(b"lgetxattr\0")).ok();
-        REAL_FGETXATTR.set(get_next_function::<FgetxattrFn>(b"fgetxattr\0")).ok();
-        REAL_LISTXATTR.set(get_next_function::<ListxattrFn>(b"listxattr\0")).ok();
-        REAL_LLISTXATTR.set(get_next_function::<LlistxattrFn>(b"llistxattr\0")).ok();
-        REAL_FLISTXATTR.set(get_next_function::<FlistxattrFn>(b"flistxattr\0")).ok();
-        REAL_REMOVEXATTR.set(get_next_function::<RemovexattrFn>(b"removexattr\0")).ok();
-        REAL_LREMOVEXATTR.set(get_next_function::<LremovexattrFn>(b"lremovexattr\0")).ok();
-        REAL_FREMOVEXATTR.set(get_next_function::<FremovexattrFn>(b"fremovexattr\0")).ok();
+        REAL_FSTAT
+            .set(get_next_function::<FstatFn>(b"fstat\0"))
+            .ok();
+        REAL_LSTAT
+            .set(get_next_function::<LstatFn>(b"lstat\0"))
+            .ok();
+        REAL_GETUID
+            .set(get_next_function::<GetuidFn>(b"getuid\0"))
+            .ok();
+        REAL_GETEUID
+            .set(get_next_function::<GeteuidFn>(b"geteuid\0"))
+            .ok();
+        REAL_GETGID
+            .set(get_next_function::<GetgidFn>(b"getgid\0"))
+            .ok();
+        REAL_GETEGID
+            .set(get_next_function::<GetegidFn>(b"getegid\0"))
+            .ok();
+        REAL_CHOWN
+            .set(get_next_function::<ChownFn>(b"chown\0"))
+            .ok();
+        REAL_CHMOD
+            .set(get_next_function::<ChmodFn>(b"chmod\0"))
+            .ok();
+        REAL_LCHOWN
+            .set(get_next_function::<LchownFn>(b"lchown\0"))
+            .ok();
+        REAL_FCHOWN
+            .set(get_next_function::<FchownFn>(b"fchown\0"))
+            .ok();
+        REAL_FCHOWNAT
+            .set(get_next_function::<FchownatFn>(b"fchownat\0"))
+            .ok();
+        REAL_FSTATAT
+            .set(get_next_function::<FstatatFn>(b"fstatat\0"))
+            .ok();
+        REAL_STATX
+            .set(get_next_function::<StatxFn>(b"statx\0"))
+            .ok();
+        REAL_GETRESUID
+            .set(get_next_function::<GetresuidFn>(b"getresuid\0"))
+            .ok();
+        REAL_GETRESGID
+            .set(get_next_function::<GetresgidFn>(b"getresgid\0"))
+            .ok();
+        REAL_SETUID
+            .set(get_next_function::<SetuidFn>(b"setuid\0"))
+            .ok();
+        REAL_SETGID
+            .set(get_next_function::<SetgidFn>(b"setgid\0"))
+            .ok();
+        REAL_SETREUID
+            .set(get_next_function::<SetreuidFn>(b"setreuid\0"))
+            .ok();
+        REAL_SETREGID
+            .set(get_next_function::<SetregidFn>(b"setregid\0"))
+            .ok();
+        REAL_SETRESUID
+            .set(get_next_function::<SetresuidFn>(b"setresuid\0"))
+            .ok();
+        REAL_SETRESGID
+            .set(get_next_function::<SetresgidFn>(b"setresgid\0"))
+            .ok();
+        REAL_SETFSUID
+            .set(get_next_function::<SetfsuidFn>(b"setfsuid\0"))
+            .ok();
+        REAL_SETFSGID
+            .set(get_next_function::<SetfsgidFn>(b"setfsgid\0"))
+            .ok();
+        REAL_SETGROUPS
+            .set(get_next_function::<SetgroupsFn>(b"setgroups\0"))
+            .ok();
+        REAL_CAPSET
+            .set(get_next_function::<CapsetFn>(b"capset\0"))
+            .ok();
+        REAL_FCHMOD
+            .set(get_next_function::<FchmodFn>(b"fchmod\0"))
+            .ok();
+        REAL_FCHMODAT
+            .set(get_next_function::<FchmodatFn>(b"fchmodat\0"))
+            .ok();
+        REAL_UNLINK
+            .set(get_next_function::<UnlinkFn>(b"unlink\0"))
+            .ok();
+        REAL_UNLINKAT
+            .set(get_next_function::<UnlinkatFn>(b"unlinkat\0"))
+            .ok();
+        REAL_RMDIR
+            .set(get_next_function::<RmdirFn>(b"rmdir\0"))
+            .ok();
+        REAL_RENAME
+            .set(get_next_function::<RenameFn>(b"rename\0"))
+            .ok();
+        REAL_RENAMEAT
+            .set(get_next_function::<RenameatFn>(b"renameat\0"))
+            .ok();
+        REAL_RENAMEAT2
+            .set(get_next_function::<Renameat2Fn>(b"renameat2\0"))
+            .ok();
+        REAL_MKNOD
+            .set(get_next_function::<MknodFn>(b"mknod\0"))
+            .ok();
+        REAL_MKNODAT
+            .set(get_next_function::<MknodatFn>(b"mknodat\0"))
+            .ok();
+        REAL_SETXATTR
+            .set(get_next_function::<SetxattrFn>(b"setxattr\0"))
+            .ok();
+        REAL_LSETXATTR
+            .set(get_next_function::<LsetxattrFn>(b"lsetxattr\0"))
+            .ok();
+        REAL_FSETXATTR
+            .set(get_next_function::<FsetxattrFn>(b"fsetxattr\0"))
+            .ok();
+        REAL_GETXATTR
+            .set(get_next_function::<GetxattrFn>(b"getxattr\0"))
+            .ok();
+        REAL_LGETXATTR
+            .set(get_next_function::<LgetxattrFn>(b"lgetxattr\0"))
+            .ok();
+        REAL_FGETXATTR
+            .set(get_next_function::<FgetxattrFn>(b"fgetxattr\0"))
+            .ok();
+        REAL_LISTXATTR
+            .set(get_next_function::<ListxattrFn>(b"listxattr\0"))
+            .ok();
+        REAL_LLISTXATTR
+            .set(get_next_function::<LlistxattrFn>(b"llistxattr\0"))
+            .ok();
+        REAL_FLISTXATTR
+            .set(get_next_function::<FlistxattrFn>(b"flistxattr\0"))
+            .ok();
+        REAL_REMOVEXATTR
+            .set(get_next_function::<RemovexattrFn>(b"removexattr\0"))
+            .ok();
+        REAL_LREMOVEXATTR
+            .set(get_next_function::<LremovexattrFn>(b"lremovexattr\0"))
+            .ok();
+        REAL_FREMOVEXATTR
+            .set(get_next_function::<FremovexattrFn>(b"fremovexattr\0"))
+            .ok();
     }
 }
 
@@ -187,7 +297,10 @@ unsafe fn get_next_function<T>(symbol: &[u8]) -> T {
     let handle = libc::RTLD_NEXT;
     let ptr = libc::dlsym(handle, symbol.as_ptr() as *const c_char);
     if ptr.is_null() {
-        panic!("Failed to find symbol {} with RTLD_NEXT", String::from_utf8_lossy(symbol));
+        panic!(
+            "Failed to find symbol {} with RTLD_NEXT",
+            String::from_utf8_lossy(symbol)
+        );
     }
     unsafe { std::mem::transmute_copy(&ptr) }
 }

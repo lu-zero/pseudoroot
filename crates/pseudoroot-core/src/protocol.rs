@@ -168,8 +168,9 @@ impl IpcChannel {
             let mut buf = vec![0u8; len];
             stream.read_exact(&mut buf)?;
 
-            ProtocolMessage::from_bytes(&buf)
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid message"))
+            ProtocolMessage::from_bytes(&buf).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid message")
+            })
         } else {
             Err(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,

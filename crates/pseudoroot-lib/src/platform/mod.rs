@@ -119,17 +119,16 @@ pub trait PlatformHelper {
 
     /// Get the real unlinkat function
     #[cfg(target_os = "linux")]
-    unsafe fn real_unlinkat(
-        dirfd: i32,
-        path: *const std::os::raw::c_char,
-        flags: i32,
-    ) -> i32;
+    unsafe fn real_unlinkat(dirfd: i32, path: *const std::os::raw::c_char, flags: i32) -> i32;
 
     /// Get the real rmdir function
     unsafe fn real_rmdir(path: *const std::os::raw::c_char) -> i32;
 
     /// Get the real rename function
-    unsafe fn real_rename(oldpath: *const std::os::raw::c_char, newpath: *const std::os::raw::c_char) -> i32;
+    unsafe fn real_rename(
+        oldpath: *const std::os::raw::c_char,
+        newpath: *const std::os::raw::c_char,
+    ) -> i32;
 
     /// Get the real renameat function
     #[cfg(target_os = "linux")]
@@ -250,11 +249,7 @@ pub trait PlatformHelper {
 
     /// Get the real flistxattr function
     #[cfg(target_os = "linux")]
-    unsafe fn real_flistxattr(
-        fd: i32,
-        list: *mut std::os::raw::c_char,
-        size: libc::size_t,
-    ) -> i32;
+    unsafe fn real_flistxattr(fd: i32, list: *mut std::os::raw::c_char, size: libc::size_t) -> i32;
 
     /// Get the real removexattr function
     #[cfg(target_os = "linux")]

@@ -86,11 +86,7 @@ impl DaemonState {
 }
 
 /// Handle a single client connection
-fn handle_client(
-    mut stream: UnixStream,
-    state: Arc<RwLock<FakeRootState>>,
-    verbose: bool,
-) {
+fn handle_client(mut stream: UnixStream, state: Arc<RwLock<FakeRootState>>, verbose: bool) {
     if verbose {
         eprintln!("Daemon: New client connection");
     }
@@ -256,7 +252,11 @@ fn main() {
     let listener = match UnixListener::bind(&args.socket_path) {
         Ok(listener) => listener,
         Err(e) => {
-            eprintln!("Error: Failed to bind to socket {}: {}", args.socket_path.display(), e);
+            eprintln!(
+                "Error: Failed to bind to socket {}: {}",
+                args.socket_path.display(),
+                e
+            );
             std::process::exit(1);
         }
     };
@@ -266,8 +266,14 @@ fn main() {
         eprintln!("Warning: Failed to set socket permissions: {}", e);
     }
 
-    println!("pseudoroot-daemon: Listening on {}", args.socket_path.display());
-    println!("pseudoroot-daemon: Initial UID={}, GID={}", args.uid, args.gid);
+    println!(
+        "pseudoroot-daemon: Listening on {}",
+        args.socket_path.display()
+    );
+    println!(
+        "pseudoroot-daemon: Initial UID={}, GID={}",
+        args.uid, args.gid
+    );
     println!("Press Ctrl+C to stop");
 
     let socket_path_clone = args.socket_path.clone();

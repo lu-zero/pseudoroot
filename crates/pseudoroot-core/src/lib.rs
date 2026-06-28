@@ -3,8 +3,9 @@
 //! This crate provides the shared data structures and state management
 //! for the pseudoroot library interposition system.
 
-pub mod state;
+pub mod daemon_client;
 pub mod protocol;
+pub mod state;
 
 pub use state::{FakeRootState, FileOwnership, UidGidMap};
 
@@ -81,7 +82,7 @@ mod tests {
         let ownership = FileOwnership::new(3000, 4000);
         state.set_ownership("/tmp/test".to_string(), ownership);
         assert_eq!(state.get_ownership("/tmp/test"), Some(ownership));
-        
+
         let removed = state.remove_ownership("/tmp/test");
         assert_eq!(removed, Some(ownership));
         assert_eq!(state.get_ownership("/tmp/test"), None);
@@ -93,11 +94,11 @@ mod tests {
         map.add_uid(1000, 1001);
         map.add_uid(1002, 1003);
         map.add_gid(2000, 2001);
-        
+
         assert_eq!(map.get_uid(1000), Some(1001));
         assert_eq!(map.get_uid(1002), Some(1003));
         assert_eq!(map.get_uid(9999), None);
-        
+
         assert_eq!(map.get_gid(2000), Some(2001));
         assert_eq!(map.get_gid(9999), None);
     }

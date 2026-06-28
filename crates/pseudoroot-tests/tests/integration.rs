@@ -3,8 +3,10 @@
 //! These tests verify that the library interposition works correctly
 //! for core functionality like getuid, getgid, and stat.
 
-use pseudoroot_tests::{cleanup_test_file, create_test_file, find_pseudoroot_bin,
-                        find_pseudoroot_lib, run_pseudoroot_command};
+use pseudoroot_tests::{
+    cleanup_test_file, create_test_file, find_pseudoroot_bin, find_pseudoroot_lib,
+    run_pseudoroot_command,
+};
 use std::process::Command;
 use std::str;
 
@@ -31,11 +33,14 @@ fn test_print_library_path() {
     let pseudoroot_bin = find_pseudoroot_bin();
 
     let output = Command::new(pseudoroot_bin)
-        .arg("--print-library-path")
+        .arg("print-library-path")
         .output()
-        .expect("Failed to run pseudoroot --print-library-path");
+        .expect("Failed to run pseudoroot print-library-path");
 
-    assert!(output.status.success(), "pseudoroot --print-library-path should succeed");
+    assert!(
+        output.status.success(),
+        "pseudoroot print-library-path should succeed"
+    );
 
     let stdout = str::from_utf8(&output.stdout).unwrap_or("");
     let lib_path = stdout.trim();
@@ -52,7 +57,10 @@ fn test_print_library_path() {
 fn test_pseudoroot_runs_simple_command() {
     let output = run_pseudoroot_command(&["echo", "hello"], 0, 0);
 
-    assert!(output.status.success(), "pseudoroot should run simple commands");
+    assert!(
+        output.status.success(),
+        "pseudoroot should run simple commands"
+    );
 
     let stdout = str::from_utf8(&output.stdout).unwrap_or("");
     assert_eq!(stdout.trim(), "hello", "Expected 'hello' output");
@@ -67,7 +75,10 @@ fn test_environment_variables() {
         888,
     );
 
-    assert!(output.status.success(), "Should be able to read environment variables");
+    assert!(
+        output.status.success(),
+        "Should be able to read environment variables"
+    );
 
     let stdout = str::from_utf8(&output.stdout).unwrap_or("");
     let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
@@ -93,10 +104,7 @@ fn test_exit_status_preserved() {
 
     // Test with a command that fails
     let output = run_pseudoroot_command(&["false"], 0, 0);
-    assert!(
-        !output.status.success(),
-        "false should fail"
-    );
+    assert!(!output.status.success(), "false should fail");
 }
 
 /// Test running commands with custom UID/GID
@@ -121,11 +129,7 @@ fn test_custom_uid_gid_in_command() {
 /// Test that multiple arguments are passed correctly
 #[test]
 fn test_multiple_arguments() {
-    let output = run_pseudoroot_command(
-        &["echo", "arg1", "arg2", "arg3"],
-        0,
-        0,
-    );
+    let output = run_pseudoroot_command(&["echo", "arg1", "arg2", "arg3"], 0, 0);
 
     assert!(output.status.success());
 
@@ -141,11 +145,7 @@ fn test_chown_command() {
 
     // Run chown through pseudoroot - this should work even if we don't have permission
     // because pseudoroot fakes the permissions
-    let output = run_pseudoroot_command(
-        &["chown", "1000:1000", test_file],
-        0,
-        0,
-    );
+    let output = run_pseudoroot_command(&["chown", "1000:1000", test_file], 0, 0);
 
     // chown might succeed or fail depending on system permissions
     // The important thing is that the command ran
@@ -163,19 +163,18 @@ fn test_stat_command() {
     let test_file = "/tmp/pseudoroot_stat_test";
     create_test_file(test_file);
 
-    let output = run_pseudoroot_command(
-        &["stat", "--format=%u", test_file],
-        0,
-        0,
-    );
+    let output = run_pseudoroot_command(&["stat", "--format=%u", test_file], 0, 0);
 
     // stat might fail if statx is not properly handled, but that's ok for this test
     // The important thing is that the command ran through pseudoroot
     if !output.status.success() {
         let stderr = str::from_utf8(&output.stderr).unwrap_or("");
         // If it fails due to statx, that's a known limitation
-        assert!(stderr.contains("statx") || stderr.contains("No such file"), 
-            "stat failed with unexpected error: {}", stderr);
+        assert!(
+            stderr.contains("statx") || stderr.contains("No such file"),
+            "stat failed with unexpected error: {}",
+            stderr
+        );
     }
 
     cleanup_test_file(test_file);
@@ -210,16 +209,16 @@ fn test_id_command() {
 /// Test that we can chain multiple commands
 #[test]
 fn test_chained_commands() {
-    let output = run_pseudoroot_command(
-        &["sh", "-c", "echo hello && echo world"],
-        0,
-        0,
-    );
+    let output = run_pseudoroot_command(&["sh", "-c", "echo hello && echo world"], 0, 0);
 
     assert!(output.status.success());
 
     let stdout = str::from_utf8(&output.stdout).unwrap_or("");
-    let lines: Vec<&str> = stdout.lines().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let lines: Vec<&str> = stdout
+        .lines()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
 
     assert!(lines.len() >= 1, "Should have at least one line of output");
 }

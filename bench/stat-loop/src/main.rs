@@ -73,7 +73,9 @@ fn main() {
         let files = Arc::clone(&files);
         let barrier = Arc::clone(&barrier);
         let abort = Arc::clone(&abort);
-        handles.push(thread::spawn(move || worker(&files, n_calls, nfiles, &barrier, &abort)));
+        handles.push(thread::spawn(move || {
+            worker(&files, n_calls, nfiles, &barrier, &abort)
+        }));
     }
     worker(&files, n_calls, nfiles, &barrier, &abort);
     for h in handles {

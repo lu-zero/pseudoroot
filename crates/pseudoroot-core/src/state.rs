@@ -3,23 +3,18 @@
 //! This module provides the core state structures for tracking fake ownership
 //! and permissions in the pseudoroot system.
 
+use dashmap::DashMap;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// Represents the ownership of a file or directory
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FileOwnership {
     /// The fake user ID
     pub uid: u32,
     /// The fake group ID
     pub gid: u32,
-}
-
-impl Default for FileOwnership {
-    fn default() -> Self {
-        // Default to root:root
-        Self { uid: 0, gid: 0 }
-    }
 }
 
 impl FileOwnership {
@@ -108,23 +103,23 @@ impl UidGidMap {
 pub struct FakeRootState {
     /// Mapping from real to fake UID/GID
     pub uid_gid_map: UidGidMap,
-    /// Map from file path to its fake ownership
+    /// Map from file path to its fake ownership (concurrent HashMap for better performance)
     /// Note: This uses String keys for paths; in a daemon-based implementation,
     /// this would be more sophisticated (inode-based, etc.)
-    pub ownership_map: HashMap<String, FileOwnership>,
-    /// The current fake UID to report
-    pub current_uid: u32,
-    /// The current fake GID to report
-    pub current_gid: u32,
+    pub ownership_map: DashMap<String, FileOwnership>,
+    /// The current fake UID to report (atomic for lock-free reads)
+    pub current_uid: AtomicU32,
+    /// The current fake GID to report (atomic for lock-free reads)
+    pub current_gid: AtomicU32,
 }
 
 impl Default for FakeRootState {
     fn default() -> Self {
         Self {
             uid_gid_map: UidGidMap::default(),
-            ownership_map: HashMap::new(),
-            current_uid: 0,
-            current_gid: 0,
+            ownership_map: DashMap::new(),
+            current_uid: AtomicU32::new(0),
+            current_gid: AtomicU32::new(0),
         }
     }
 }
@@ -139,41 +134,41 @@ impl FakeRootState {
     /// Set the current fake UID and GID
     #[inline]
     pub fn set_current(&mut self, uid: u32, gid: u32) {
-        self.current_uid = uid;
-        self.current_gid = gid;
+        self.current_uid.store(uid, Ordering::Relaxed);
+        self.current_gid.store(gid, Ordering::Relaxed);
     }
 
-    /// Get the current fake UID
+    /// Get the current fake UID (lock-free atomic read)
     #[inline]
     #[must_use]
-    pub const fn current_uid(&self) -> u32 {
-        self.current_uid
+    pub fn current_uid(&self) -> u32 {
+        self.current_uid.load(Ordering::Relaxed)
     }
 
-    /// Get the current fake GID
+    /// Get the current fake GID (lock-free atomic read)
     #[inline]
     #[must_use]
-    pub const fn current_gid(&self) -> u32 {
-        self.current_gid
+    pub fn current_gid(&self) -> u32 {
+        self.current_gid.load(Ordering::Relaxed)
     }
 
-    /// Set the ownership of a file or directory
+    /// Set the ownership of a file or directory (lock-free concurrent insert)
     #[inline]
     pub fn set_ownership(&mut self, path: String, ownership: FileOwnership) {
         self.ownership_map.insert(path, ownership);
     }
 
-    /// Get the ownership of a file or directory
+    /// Get the ownership of a file or directory (lock-free concurrent read)
     #[inline]
     #[must_use]
     pub fn get_ownership(&self, path: &str) -> Option<FileOwnership> {
-        self.ownership_map.get(path).copied()
+        self.ownership_map.get(path).map(|entry| *entry.value())
     }
 
     /// Remove the ownership entry for a file or directory
     #[inline]
     pub fn remove_ownership(&mut self, path: &str) -> Option<FileOwnership> {
-        self.ownership_map.remove(path)
+        self.ownership_map.remove(path).map(|(_, v)| v)
     }
 }
 
@@ -184,29 +179,30 @@ static GLOBAL_STATE: std::sync::OnceLock<RwLock<FakeRootState>> = std::sync::Onc
 /// Initialize the global fake root state
 pub fn init_global_state() -> RwLockWriteGuard<'static, FakeRootState> {
     let lock = GLOBAL_STATE.get_or_init(|| RwLock::new(FakeRootState::new()));
-    lock.write().expect("Failed to acquire write lock on global state")
+    lock.write()
+        .expect("Failed to acquire write lock on global state")
 }
 
 /// Get a read lock on the global fake root state
 ///
 /// # Panics
 /// Panics if the global state has not been initialized
-#[must_use]
 pub fn global_state_read() -> RwLockReadGuard<'static, FakeRootState> {
     let lock = GLOBAL_STATE
         .get()
         .expect("Global state not initialized. Call init_global_state() first.");
-    lock.read().expect("Failed to acquire read lock on global state")
+    lock.read()
+        .expect("Failed to acquire read lock on global state")
 }
 
 /// Get a write lock on the global fake root state
 ///
 /// # Panics
 /// Panics if the global state has not been initialized
-#[must_use]
 pub fn global_state_write() -> RwLockWriteGuard<'static, FakeRootState> {
     let lock = GLOBAL_STATE
         .get()
         .expect("Global state not initialized. Call init_global_state() first.");
-    lock.write().expect("Failed to acquire write lock on global state")
+    lock.write()
+        .expect("Failed to acquire write lock on global state")
 }

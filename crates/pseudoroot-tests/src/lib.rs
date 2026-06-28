@@ -29,7 +29,10 @@ pub fn find_pseudoroot_bin() -> PathBuf {
         }
     }
 
-    panic!("Could not find pseudoroot binary. Run 'cargo build -p pseudoroot' first. Tried: {:?}", candidates);
+    panic!(
+        "Could not find pseudoroot binary. Run 'cargo build -p pseudoroot' first. Tried: {:?}",
+        candidates
+    );
 }
 
 /// Find the path to the pseudoroot library
@@ -69,6 +72,7 @@ pub fn run_pseudoroot_command(command: &[&str], uid: u32, gid: u32) -> Output {
     let pseudoroot_bin = find_pseudoroot_bin();
 
     let mut cmd = Command::new(pseudoroot_bin);
+    cmd.arg("run");
     cmd.arg("--uid").arg(uid.to_string());
     cmd.arg("--gid").arg(gid.to_string());
     cmd.args(command);
