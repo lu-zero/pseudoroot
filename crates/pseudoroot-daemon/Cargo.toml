@@ -8,5 +8,6 @@ repository.workspace = true
 
 [dependencies]
 pseudoroot-core.workspace = true
-rustix = { version = "0.38", features = ["fs", "process", "system"] }
+clap = { version = "4.0", features = ["derive"] }
+ctrlc = "3.4"
 libc = "0.2"
