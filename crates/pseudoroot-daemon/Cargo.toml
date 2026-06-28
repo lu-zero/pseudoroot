@@ -1,0 +1,12 @@
+[package]
+name = "pseudoroot-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+pseudoroot-core.workspace = true
+rustix = { version = "0.38", features = ["fs", "process", "system"] }
+libc = "0.2"
