@@ -262,3 +262,36 @@ pub unsafe fn cstr_to_string(cstr: *const c_char) -> Option<String> {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cstr_to_string_null() {
+        unsafe {
+            let result = cstr_to_string(std::ptr::null());
+            assert_eq!(result, None);
+        }
+    }
+
+    #[test]
+    fn test_cstr_to_string_valid() {
+        use std::ffi::CString;
+        unsafe {
+            let c_str = CString::new("test").unwrap();
+            let result = cstr_to_string(c_str.as_ptr());
+            assert_eq!(result, Some("test".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_cstr_to_string_empty() {
+        use std::ffi::CString;
+        unsafe {
+            let c_str = CString::new("").unwrap();
+            let result = cstr_to_string(c_str.as_ptr());
+            assert_eq!(result, Some("".to_string()));
+        }
+    }
+}
