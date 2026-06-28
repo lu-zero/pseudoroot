@@ -333,6 +333,14 @@ pub extern "C" fn chmod(
     unsafe { platform::real_chmod(path, mode) }
 }
 
+/// Change file mode by file descriptor
+#[unsafe(no_mangle)]
+pub extern "C" fn fchmod(fd: i32, mode: libc::mode_t) -> i32 {
+    // Just pass through to the real fchmod for now
+    // In a full implementation, we might want to track file modes too
+    unsafe { platform::real_fchmod(fd, mode) }
+}
+
 /// Change file mode relative to directory file descriptor
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]

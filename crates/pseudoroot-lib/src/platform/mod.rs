@@ -72,6 +72,9 @@ pub trait PlatformHelper {
         flags: i32,
     ) -> i32;
 
+    /// Get the real fchmod function
+    unsafe fn real_fchmod(fd: i32, mode: libc::mode_t) -> i32;
+
     /// Get the real fchmodat function
     #[cfg(target_os = "linux")]
     unsafe fn real_fchmodat(

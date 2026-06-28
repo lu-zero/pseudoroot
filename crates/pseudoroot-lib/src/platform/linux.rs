@@ -22,6 +22,7 @@ type FchownFn = unsafe extern "C" fn(i32, u32, u32) -> i32;
 type FstatatFn = unsafe extern "C" fn(i32, *const c_char, *mut libc::stat, i32) -> i32;
 type StatxFn = unsafe extern "C" fn(i32, *const c_char, *mut std::ffi::c_void, u32, i32) -> i32;
 type FchownatFn = unsafe extern "C" fn(i32, *const c_char, u32, u32, i32) -> i32;
+type FchmodFn = unsafe extern "C" fn(i32, libc::mode_t) -> i32;
 type FchmodatFn = unsafe extern "C" fn(i32, *const c_char, libc::mode_t, i32) -> i32;
 type GetresuidFn = unsafe extern "C" fn(*mut u32, *mut u32, *mut u32) -> i32;
 type GetresgidFn = unsafe extern "C" fn(*mut u32, *mut u32, *mut u32) -> i32;
@@ -73,6 +74,7 @@ static REAL_FCHOWN: OnceLock<FchownFn> = OnceLock::new();
 static REAL_FSTATAT: OnceLock<FstatatFn> = OnceLock::new();
 static REAL_STATX: OnceLock<StatxFn> = OnceLock::new();
 static REAL_FCHOWNAT: OnceLock<FchownatFn> = OnceLock::new();
+static REAL_FCHMOD: OnceLock<FchmodFn> = OnceLock::new();
 static REAL_FCHMODAT: OnceLock<FchmodatFn> = OnceLock::new();
 static REAL_GETRESUID: OnceLock<GetresuidFn> = OnceLock::new();
 static REAL_GETRESGID: OnceLock<GetresgidFn> = OnceLock::new();
@@ -126,6 +128,7 @@ fn init() {
         REAL_FSTATAT.set(get_next_function::<FstatatFn>(b"fstatat\0")).ok();
         REAL_STATX.set(get_next_function::<StatxFn>(b"statx\0")).ok();
         REAL_FCHOWNAT.set(get_next_function::<FchownatFn>(b"fchownat\0")).ok();
+        REAL_FCHMOD.set(get_next_function::<FchmodFn>(b"fchmod\0")).ok();
         REAL_FCHMODAT.set(get_next_function::<FchmodatFn>(b"fchmodat\0")).ok();
         REAL_GETRESUID.set(get_next_function::<GetresuidFn>(b"getresuid\0")).ok();
         REAL_GETRESGID.set(get_next_function::<GetresgidFn>(b"getresgid\0")).ok();
@@ -310,6 +313,14 @@ impl PlatformHelper for LinuxHelper {
             func(dirfd, path, uid, gid, flags)
         } else {
             libc::fchownat(dirfd, path, uid, gid, flags)
+        }
+    }
+
+    unsafe fn real_fchmod(fd: i32, mode: libc::mode_t) -> i32 {
+        if let Some(func) = REAL_FCHMOD.get() {
+            func(fd, mode)
+        } else {
+            libc::fchmod(fd, mode)
         }
     }
 
@@ -680,6 +691,11 @@ pub unsafe fn real_fchownat(
     flags: i32,
 ) -> i32 {
     LinuxHelper::real_fchownat(dirfd, path, uid, gid, flags)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_fchmod(fd: i32, mode: libc::mode_t) -> i32 {
+    LinuxHelper::real_fchmod(fd, mode)
 }
 
 #[cfg(target_os = "linux")]
