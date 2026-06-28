@@ -4,6 +4,7 @@ members = [
     "crates/pseudoroot-lib",
     "crates/pseudoroot-daemon",
     "crates/pseudoroot",
+    "crates/pseudoroot-tests",
     "bench/stat-loop",
 ]
 resolver = "2"

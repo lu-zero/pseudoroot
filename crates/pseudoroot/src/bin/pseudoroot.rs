@@ -25,6 +25,7 @@ use std::process;
 #[command(about = "Run commands with fake root privileges", long_about = None)]
 struct Args {
     /// The command to run with fake root privileges
+    #[arg(allow_hyphen_values = true)]
     command: Vec<String>,
     
     /// Print the library path and exit
@@ -136,7 +137,19 @@ fn main() {
 /// 2. Standard library paths
 fn find_library_path() -> Option<std::path::PathBuf> {
     // Try to find the library in the build directory
-    let candidates = [
+    // First, try relative to the current executable's location
+    let mut candidates = Vec::new();
+    
+    if let Ok(exe_path) = std::env::current_exe() {
+        let exe_dir = exe_path.parent().unwrap_or_else(|| std::path::Path::new("/"));
+        candidates.push(exe_dir.join("../libpseudoroot_lib.so"));
+        candidates.push(exe_dir.join("../libpseudoroot_lib.dylib"));
+        candidates.push(exe_dir.join("libpseudoroot_lib.so"));
+        candidates.push(exe_dir.join("libpseudoroot_lib.dylib"));
+    }
+    
+    // Also try standard cargo build locations from the current working directory
+    candidates.extend([
         // Built with cargo-c
         "target/cbuild/release/libpseudoroot_lib.so",
         "target/cbuild/debug/libpseudoroot_lib.so",
@@ -146,12 +159,14 @@ fn find_library_path() -> Option<std::path::PathBuf> {
         // Built with cargo - release
         "target/release/libpseudoroot_lib.so",
         "target/release/libpseudoroot_lib.dylib",
-    ];
+        // Also try with hyphen (older cargo versions)
+        "target/debug/libpseudoroot-lib.so",
+        "target/release/libpseudoroot-lib.so",
+    ].iter().map(std::path::PathBuf::from));
 
     for candidate in candidates {
-        let path = std::path::PathBuf::from(candidate);
-        if path.exists() {
-            return Some(path);
+        if candidate.exists() {
+            return Some(candidate);
         }
     }
 
