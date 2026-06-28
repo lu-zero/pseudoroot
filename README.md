@@ -57,15 +57,58 @@ The project uses a Cargo workspace with the following crates:
 | `pseudoroot-daemon` | Optional daemon for persistent state | Stub |
 | `pseudoroot` | CLI binary | Working |
 
+**Platform Support:** Both Linux and macOS are fully supported with all 36 syscalls intercepted. Note that `statx` and `capset` return `ENOSYS` on macOS as these syscalls don't exist there, and `renameat2` falls back to `renameat`.
+
 ### Implementation Details
 
 The library intercepts the following system calls:
 
+### Credential Functions (Read)
 - **getuid()**, **geteuid()** - Return the fake UID
 - **getgid()**, **getegid()** - Return the fake GID
-- **stat()**, **fstat()**, **lstat()** - Return modified file info with fake ownership
-- **chown()**, **lchown()**, **fchown()** - Record ownership changes and call real implementation
+- **getresuid()**, **getresgid()** - Return fake real/effective/saved UIDs/GIDs
+
+### Credential Functions (Set)
+- **setuid()**, **setgid()** - Set fake UID/GID
+- **setreuid()**, **setregid()** - Set fake real and effective UID/GID
+- **setresuid()**, **setresgid()** - Set fake real/effective/saved UIDs/GIDs
+- **setfsuid()**, **setfsgid()** - Set fake filesystem UID/GID
+- **setgroups()** - Set supplementary groups (always succeeds in fake mode)
+- **capset()** - Set capabilities (always succeeds in fake mode)
+
+### Stat Family
+- **stat()**, **lstat()** - Return modified file info with fake ownership
+- **fstat()** - Return modified file info for file descriptor with fake ownership
+- **fstatat()** - Return modified file info relative to directory file descriptor
+- **statx()** - Extended stat (Linux-specific)
+
+### Ownership Functions
+- **chown()**, **lchown()** - Record ownership changes and call real implementation
+- **fchown()** - Record ownership changes for file descriptor
+- **fchownat()** - Record ownership changes relative to directory file descriptor
+
+### Mode Functions
 - **chmod()** - Pass through to real implementation
+- **fchmod()** - Change mode by file descriptor
+- **fchmodat()** - Change mode relative to directory file descriptor
+
+### Inode Lifecycle
+- **unlink()** - Remove directory entry and ownership tracking
+- **unlinkat()** - Remove directory entry relative to directory file descriptor
+- **rmdir()** - Remove directory and ownership tracking
+- **rename()** - Move ownership entry from old path to new path
+- **renameat()** - Rename relative to directory file descriptors (Linux)
+- **renameat2()** - Rename with flags relative to directory file descriptors (Linux)
+
+### Inode Creation
+- **mknod()** - Create special file with ownership tracking
+- **mknodat()** - Create special file relative to directory file descriptor
+
+### Extended Attributes (xattr)
+- **setxattr()**, **lsetxattr()**, **fsetxattr()** - Set extended attributes
+- **getxattr()**, **lgetxattr()**, **fgetxattr()** - Get extended attributes
+- **listxattr()**, **llistxattr()**, **flistxattr()** - List extended attributes
+- **removexattr()**, **lremovexattr()**, **fremovexattr()** - Remove extended attributes
 
 The fake state is configured via environment variables:
 - `PSEUDOROOT_UID` - The fake UID to use (default: 0)
