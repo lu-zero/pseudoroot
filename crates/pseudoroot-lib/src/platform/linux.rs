@@ -19,6 +19,20 @@ type ChownFn = unsafe extern "C" fn(*const c_char, u32, u32) -> i32;
 type ChmodFn = unsafe extern "C" fn(*const c_char, libc::mode_t) -> i32;
 type LchownFn = unsafe extern "C" fn(*const c_char, u32, u32) -> i32;
 type FchownFn = unsafe extern "C" fn(i32, u32, u32) -> i32;
+type FstatatFn = unsafe extern "C" fn(i32, *const c_char, *mut libc::stat, i32) -> i32;
+type StatxFn = unsafe extern "C" fn(i32, *const c_char, *mut std::ffi::c_void, u32, i32) -> i32;
+type FchownatFn = unsafe extern "C" fn(i32, *const c_char, u32, u32, i32) -> i32;
+type FchmodatFn = unsafe extern "C" fn(i32, *const c_char, libc::mode_t, i32) -> i32;
+type GetresuidFn = unsafe extern "C" fn(*mut u32, *mut u32, *mut u32) -> i32;
+type GetresgidFn = unsafe extern "C" fn(*mut u32, *mut u32, *mut u32) -> i32;
+type SetuidFn = unsafe extern "C" fn(u32) -> i32;
+type SetgidFn = unsafe extern "C" fn(u32) -> i32;
+type SetreuidFn = unsafe extern "C" fn(u32, u32) -> i32;
+type SetregidFn = unsafe extern "C" fn(u32, u32) -> i32;
+type SetresuidFn = unsafe extern "C" fn(u32, u32, u32) -> i32;
+type SetresgidFn = unsafe extern "C" fn(u32, u32, u32) -> i32;
+type SetfsuidFn = unsafe extern "C" fn(u32) -> i32;
+type SetfsgidFn = unsafe extern "C" fn(u32) -> i32;
 
 // Use OnceLock for thread-safe lazy initialization
 static REAL_STAT: OnceLock<StatFn> = OnceLock::new();
@@ -32,6 +46,20 @@ static REAL_CHOWN: OnceLock<ChownFn> = OnceLock::new();
 static REAL_CHMOD: OnceLock<ChmodFn> = OnceLock::new();
 static REAL_LCHOWN: OnceLock<LchownFn> = OnceLock::new();
 static REAL_FCHOWN: OnceLock<FchownFn> = OnceLock::new();
+static REAL_FSTATAT: OnceLock<FstatatFn> = OnceLock::new();
+static REAL_STATX: OnceLock<StatxFn> = OnceLock::new();
+static REAL_FCHOWNAT: OnceLock<FchownatFn> = OnceLock::new();
+static REAL_FCHMODAT: OnceLock<FchmodatFn> = OnceLock::new();
+static REAL_GETRESUID: OnceLock<GetresuidFn> = OnceLock::new();
+static REAL_GETRESGID: OnceLock<GetresgidFn> = OnceLock::new();
+static REAL_SETUID: OnceLock<SetuidFn> = OnceLock::new();
+static REAL_SETGID: OnceLock<SetgidFn> = OnceLock::new();
+static REAL_SETREUID: OnceLock<SetreuidFn> = OnceLock::new();
+static REAL_SETREGID: OnceLock<SetregidFn> = OnceLock::new();
+static REAL_SETRESUID: OnceLock<SetresuidFn> = OnceLock::new();
+static REAL_SETRESGID: OnceLock<SetresgidFn> = OnceLock::new();
+static REAL_SETFSUID: OnceLock<SetfsuidFn> = OnceLock::new();
+static REAL_SETFSGID: OnceLock<SetfsgidFn> = OnceLock::new();
 
 /// Initialize the function pointers by looking up the real functions
 #[ctor::ctor]
@@ -48,6 +76,20 @@ fn init() {
         REAL_CHMOD.set(get_next_function::<ChmodFn>(b"chmod\0")).ok();
         REAL_LCHOWN.set(get_next_function::<LchownFn>(b"lchown\0")).ok();
         REAL_FCHOWN.set(get_next_function::<FchownFn>(b"fchown\0")).ok();
+        REAL_FSTATAT.set(get_next_function::<FstatatFn>(b"fstatat\0")).ok();
+        REAL_STATX.set(get_next_function::<StatxFn>(b"statx\0")).ok();
+        REAL_FCHOWNAT.set(get_next_function::<FchownatFn>(b"fchownat\0")).ok();
+        REAL_FCHMODAT.set(get_next_function::<FchmodatFn>(b"fchmodat\0")).ok();
+        REAL_GETRESUID.set(get_next_function::<GetresuidFn>(b"getresuid\0")).ok();
+        REAL_GETRESGID.set(get_next_function::<GetresgidFn>(b"getresgid\0")).ok();
+        REAL_SETUID.set(get_next_function::<SetuidFn>(b"setuid\0")).ok();
+        REAL_SETGID.set(get_next_function::<SetgidFn>(b"setgid\0")).ok();
+        REAL_SETREUID.set(get_next_function::<SetreuidFn>(b"setreuid\0")).ok();
+        REAL_SETREGID.set(get_next_function::<SetregidFn>(b"setregid\0")).ok();
+        REAL_SETRESUID.set(get_next_function::<SetresuidFn>(b"setresuid\0")).ok();
+        REAL_SETRESGID.set(get_next_function::<SetresgidFn>(b"setresgid\0")).ok();
+        REAL_SETFSUID.set(get_next_function::<SetfsuidFn>(b"setfsuid\0")).ok();
+        REAL_SETFSGID.set(get_next_function::<SetfsgidFn>(b"setfsgid\0")).ok();
     }
 }
 
@@ -154,6 +196,146 @@ impl PlatformHelper for LinuxHelper {
             libc::fchown(fd, uid, gid)
         }
     }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_fstatat(
+        dirfd: i32,
+        pathname: *const c_char,
+        buf: *mut libc::stat,
+        flags: i32,
+    ) -> i32 {
+        if let Some(func) = REAL_FSTATAT.get() {
+            func(dirfd, pathname, buf, flags)
+        } else {
+            libc::fstatat(dirfd, pathname, buf, flags)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_statx(
+        dirfd: i32,
+        pathname: *const c_char,
+        buf: *mut std::ffi::c_void,
+        mask: u32,
+        flags: i32,
+    ) -> i32 {
+        if let Some(func) = REAL_STATX.get() {
+            func(dirfd, pathname, buf, mask, flags)
+        } else {
+            // libc statx has different signature - we'll use syscall directly
+            // For now, just call the real function via syscall
+            libc::syscall(libc::SYS_statx, dirfd, pathname, buf, mask, flags) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_fchownat(
+        dirfd: i32,
+        path: *const c_char,
+        uid: u32,
+        gid: u32,
+        flags: i32,
+    ) -> i32 {
+        if let Some(func) = REAL_FCHOWNAT.get() {
+            func(dirfd, path, uid, gid, flags)
+        } else {
+            libc::fchownat(dirfd, path, uid, gid, flags)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_fchmodat(
+        dirfd: i32,
+        path: *const c_char,
+        mode: libc::mode_t,
+        flags: i32,
+    ) -> i32 {
+        if let Some(func) = REAL_FCHMODAT.get() {
+            func(dirfd, path, mode, flags)
+        } else {
+            libc::fchmodat(dirfd, path, mode, flags)
+        }
+    }
+
+    unsafe fn real_getresuid(ruid: *mut u32, euid: *mut u32, suid: *mut u32) -> i32 {
+        if let Some(func) = REAL_GETRESUID.get() {
+            func(ruid, euid, suid)
+        } else {
+            libc::getresuid(ruid, euid, suid)
+        }
+    }
+
+    unsafe fn real_getresgid(rgid: *mut u32, egid: *mut u32, sgid: *mut u32) -> i32 {
+        if let Some(func) = REAL_GETRESGID.get() {
+            func(rgid, egid, sgid)
+        } else {
+            libc::getresgid(rgid, egid, sgid)
+        }
+    }
+
+    unsafe fn real_setuid(uid: u32) -> i32 {
+        if let Some(func) = REAL_SETUID.get() {
+            func(uid)
+        } else {
+            libc::setuid(uid)
+        }
+    }
+
+    unsafe fn real_setgid(gid: u32) -> i32 {
+        if let Some(func) = REAL_SETGID.get() {
+            func(gid)
+        } else {
+            libc::setgid(gid)
+        }
+    }
+
+    unsafe fn real_setreuid(ruid: u32, euid: u32) -> i32 {
+        if let Some(func) = REAL_SETREUID.get() {
+            func(ruid, euid)
+        } else {
+            libc::setreuid(ruid, euid)
+        }
+    }
+
+    unsafe fn real_setregid(rgid: u32, egid: u32) -> i32 {
+        if let Some(func) = REAL_SETREGID.get() {
+            func(rgid, egid)
+        } else {
+            libc::setregid(rgid, egid)
+        }
+    }
+
+    unsafe fn real_setresuid(ruid: u32, euid: u32, suid: u32) -> i32 {
+        if let Some(func) = REAL_SETRESUID.get() {
+            func(ruid, euid, suid)
+        } else {
+            libc::setresuid(ruid, euid, suid)
+        }
+    }
+
+    unsafe fn real_setresgid(rgid: u32, egid: u32, sgid: u32) -> i32 {
+        if let Some(func) = REAL_SETRESGID.get() {
+            func(rgid, egid, sgid)
+        } else {
+            libc::setresgid(rgid, egid, sgid)
+        }
+    }
+
+    unsafe fn real_setfsuid(uid: u32) -> i32 {
+        if let Some(func) = REAL_SETFSUID.get() {
+            func(uid)
+        } else {
+            libc::setfsuid(uid)
+        }
+    }
+
+    unsafe fn real_setfsgid(gid: u32) -> i32 {
+        if let Some(func) = REAL_SETFSGID.get() {
+            func(gid)
+        } else {
+            libc::setfsgid(gid)
+        }
+    }
 }
 
 // Re-export the functions for use in the main lib.rs
@@ -199,4 +381,86 @@ pub unsafe fn real_lchown(path: *const c_char, uid: u32, gid: u32) -> i32 {
 
 pub unsafe fn real_fchown(fd: i32, uid: u32, gid: u32) -> i32 {
     LinuxHelper::real_fchown(fd, uid, gid)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_fstatat(
+    dirfd: i32,
+    pathname: *const c_char,
+    buf: *mut libc::stat,
+    flags: i32,
+) -> i32 {
+    LinuxHelper::real_fstatat(dirfd, pathname, buf, flags)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_statx(
+    dirfd: i32,
+    pathname: *const c_char,
+    buf: *mut std::ffi::c_void,
+    mask: u32,
+    flags: i32,
+) -> i32 {
+    LinuxHelper::real_statx(dirfd, pathname, buf, mask, flags)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_fchownat(
+    dirfd: i32,
+    path: *const c_char,
+    uid: u32,
+    gid: u32,
+    flags: i32,
+) -> i32 {
+    LinuxHelper::real_fchownat(dirfd, path, uid, gid, flags)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_fchmodat(
+    dirfd: i32,
+    path: *const c_char,
+    mode: libc::mode_t,
+    flags: i32,
+) -> i32 {
+    LinuxHelper::real_fchmodat(dirfd, path, mode, flags)
+}
+
+pub unsafe fn real_getresuid(ruid: *mut u32, euid: *mut u32, suid: *mut u32) -> i32 {
+    LinuxHelper::real_getresuid(ruid, euid, suid)
+}
+
+pub unsafe fn real_getresgid(rgid: *mut u32, egid: *mut u32, sgid: *mut u32) -> i32 {
+    LinuxHelper::real_getresgid(rgid, egid, sgid)
+}
+
+pub unsafe fn real_setuid(uid: u32) -> i32 {
+    LinuxHelper::real_setuid(uid)
+}
+
+pub unsafe fn real_setgid(gid: u32) -> i32 {
+    LinuxHelper::real_setgid(gid)
+}
+
+pub unsafe fn real_setreuid(ruid: u32, euid: u32) -> i32 {
+    LinuxHelper::real_setreuid(ruid, euid)
+}
+
+pub unsafe fn real_setregid(rgid: u32, egid: u32) -> i32 {
+    LinuxHelper::real_setregid(rgid, egid)
+}
+
+pub unsafe fn real_setresuid(ruid: u32, euid: u32, suid: u32) -> i32 {
+    LinuxHelper::real_setresuid(ruid, euid, suid)
+}
+
+pub unsafe fn real_setresgid(rgid: u32, egid: u32, sgid: u32) -> i32 {
+    LinuxHelper::real_setresgid(rgid, egid, sgid)
+}
+
+pub unsafe fn real_setfsuid(uid: u32) -> i32 {
+    LinuxHelper::real_setfsuid(uid)
+}
+
+pub unsafe fn real_setfsgid(gid: u32) -> i32 {
+    LinuxHelper::real_setfsgid(gid)
 }

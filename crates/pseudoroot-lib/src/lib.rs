@@ -94,6 +94,124 @@ pub extern "C" fn getegid() -> u32 {
     getgid()
 }
 
+/// Get real, effective, and saved user IDs
+#[unsafe(no_mangle)]
+pub extern "C" fn getresuid(ruid: *mut u32, euid: *mut u32, suid: *mut u32) -> i32 {
+    let state = global_state_read();
+    let current_uid = state.current_uid();
+    
+    if !ruid.is_null() {
+        unsafe { *ruid = current_uid; }
+    }
+    if !euid.is_null() {
+        unsafe { *euid = current_uid; }
+    }
+    if !suid.is_null() {
+        unsafe { *suid = current_uid; }
+    }
+    
+    0
+}
+
+/// Get real, effective, and saved group IDs
+#[unsafe(no_mangle)]
+pub extern "C" fn getresgid(rgid: *mut u32, egid: *mut u32, sgid: *mut u32) -> i32 {
+    let state = global_state_read();
+    let current_gid = state.current_gid();
+    
+    if !rgid.is_null() {
+        unsafe { *rgid = current_gid; }
+    }
+    if !egid.is_null() {
+        unsafe { *egid = current_gid; }
+    }
+    if !sgid.is_null() {
+        unsafe { *sgid = current_gid; }
+    }
+    
+    0
+}
+
+/// Set real user ID - always succeeds in fake mode
+#[unsafe(no_mangle)]
+pub extern "C" fn setuid(uid: u32) -> i32 {
+    // In fake mode, we just record this as the current UID
+    let mut state = global_state_write();
+    let gid = state.current_gid();
+    state.set_current(uid, gid);
+    0
+}
+
+/// Set real group ID - always succeeds in fake mode
+#[unsafe(no_mangle)]
+pub extern "C" fn setgid(gid: u32) -> i32 {
+    // In fake mode, we just record this as the current GID
+    let mut state = global_state_write();
+    let uid = state.current_uid();
+    state.set_current(uid, gid);
+    0
+}
+
+/// Set real and effective user IDs
+#[unsafe(no_mangle)]
+pub extern "C" fn setreuid(_ruid: u32, euid: u32) -> i32 {
+    // In fake mode, we just record this as the current UID
+    let mut state = global_state_write();
+    let gid = state.current_gid();
+    state.set_current(euid, gid);
+    0
+}
+
+/// Set real and effective group IDs
+#[unsafe(no_mangle)]
+pub extern "C" fn setregid(_rgid: u32, egid: u32) -> i32 {
+    // In fake mode, we just record this as the current GID
+    let mut state = global_state_write();
+    let uid = state.current_uid();
+    state.set_current(uid, egid);
+    0
+}
+
+/// Set real, effective, and saved user IDs
+#[unsafe(no_mangle)]
+pub extern "C" fn setresuid(_ruid: u32, euid: u32, _suid: u32) -> i32 {
+    // In fake mode, we just record this as the current UID
+    let mut state = global_state_write();
+    let gid = state.current_gid();
+    state.set_current(euid, gid);
+    0
+}
+
+/// Set real, effective, and saved group IDs
+#[unsafe(no_mangle)]
+pub extern "C" fn setresgid(_rgid: u32, egid: u32, _sgid: u32) -> i32 {
+    // In fake mode, we just record this as the current GID
+    let mut state = global_state_write();
+    let uid = state.current_uid();
+    state.set_current(uid, egid);
+    0
+}
+
+/// Set filesystem user ID
+#[unsafe(no_mangle)]
+pub extern "C" fn setfsuid(uid: u32) -> i32 {
+    // In fake mode, we just record this as the current UID
+    let mut state = global_state_write();
+    let gid = state.current_gid();
+    state.set_current(uid, gid);
+    0
+}
+
+/// Set filesystem group ID
+#[unsafe(no_mangle)]
+pub extern "C" fn setfsgid(gid: u32) -> i32 {
+    // In fake mode, we just record this as the current GID
+    let mut state = global_state_write();
+    let uid = state.current_uid();
+    state.set_current(uid, gid);
+    0
+}
+
 /// Set file ownership
 ///
 /// This intercepts chown() to record ownership changes in our fake state.
@@ -168,6 +286,42 @@ pub extern "C" fn lstat(
     result
 }
 
+/// Get file status relative to directory file descriptor
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn fstatat(
+    dirfd: i32,
+    pathname: *const c_char,
+    buf: *mut libc::stat,
+    flags: i32,
+) -> i32 {
+    // First, call the real fstatat to get actual file info
+    let result = unsafe { platform::real_fstatat(dirfd, pathname, buf, flags) };
+    
+    if result == 0 && !buf.is_null() {
+        // Successfully got file info, now modify ownership fields
+        // For now, we use the pathname (won't work correctly for relative paths)
+        unsafe { modify_stat_ownership(pathname, buf) };
+    }
+    
+    result
+}
+
+/// Extended stat (Linux-specific)
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn statx(
+    dirfd: i32,
+    pathname: *const c_char,
+    buf: *mut std::ffi::c_void,
+    mask: u32,
+    flags: i32,
+) -> i32 {
+    // For now, just pass through to the real statx
+    // In a full implementation, we would modify the ownership fields in the statx buffer
+    unsafe { platform::real_statx(dirfd, pathname, buf, mask, flags) }
+}
+
 /// Change file mode
 #[unsafe(no_mangle)]
 pub extern "C" fn chmod(
@@ -177,6 +331,19 @@ pub extern "C" fn chmod(
     // Just pass through to the real chmod for now
     // In a full implementation, we might want to track file modes too
     unsafe { platform::real_chmod(path, mode) }
+}
+
+/// Change file mode relative to directory file descriptor
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn fchmodat(
+    dirfd: i32,
+    path: *const c_char,
+    mode: libc::mode_t,
+    flags: i32,
+) -> i32 {
+    // Just pass through to the real fchmodat for now
+    unsafe { platform::real_fchmodat(dirfd, path, mode, flags) }
 }
 
 /// Change file ownership by path (no symlink following)
@@ -205,6 +372,35 @@ pub extern "C" fn fchown(
 ) -> i32 {
     // Can't easily map fd to path, so just pass through to real fchown
     unsafe { platform::real_fchown(fd, uid, gid) }
+}
+
+/// Change file ownership relative to directory file descriptor
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn fchownat(
+    dirfd: i32,
+    path: *const c_char,
+    uid: u32,
+    gid: u32,
+    flags: i32,
+) -> i32 {
+    // Try to record the ownership change in our fake state
+    let mut state = global_state_write();
+    if flags == libc::AT_FDCWD || dirfd == libc::AT_FDCWD {
+        // Relative to current directory
+        if let Some(path_str) = unsafe { cstr_to_string(path) } {
+            state.set_ownership(path_str, FileOwnership::new(uid, gid));
+        }
+    } else {
+        // For now, we can't easily resolve dirfd+path to a full path
+        // Just record the path component (won't match on stat, but better than nothing)
+        if let Some(path_str) = unsafe { cstr_to_string(path) } {
+            state.set_ownership(path_str, FileOwnership::new(uid, gid));
+        }
+    }
+    
+    // Also call the real fchownat
+    unsafe { platform::real_fchownat(dirfd, path, uid, gid, flags) }
 }
 
 /// Modify stat buffer ownership fields based on path-specific ownership
