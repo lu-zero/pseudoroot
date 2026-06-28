@@ -14,7 +14,7 @@ n_stat_native="${1:-500000}"  # per-worker, native: large for stable timing
 n_stat_fake="${2:-20000}"     # per-worker, pseudoroot: small so the matrix finishes
 cores="$(nproc)"
 helper_manifest="$root/bench/stat-loop/Cargo.toml"
-helper="$root/bench/stat-loop/target/release/stat-loop"
+helper="$root/target/release/stat-loop"
 target="$root/target/release/pseudoroot"
 
 workers=()
