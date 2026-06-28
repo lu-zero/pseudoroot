@@ -589,6 +589,198 @@ pub extern "C" fn renameat2(
     unsafe { platform::real_renameat2(olddirfd, oldpath, newdirfd, newpath, flags) }
 }
 
+/// Create a special file (FIFO, character device, block device)
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn mknod(
+    pathname: *const c_char,
+    mode: libc::mode_t,
+    dev: libc::dev_t,
+) -> i32 {
+    // Get current UID/GID first, then record ownership
+    let state = global_state_read();
+    let current_uid = state.current_uid();
+    let current_gid = state.current_gid();
+    
+    // Try to record the ownership for the new file in our fake state
+    let mut state_mut = global_state_write();
+    if let Some(path_str) = unsafe { cstr_to_string(pathname) } {
+        // Set ownership to current fake UID/GID
+        state_mut.set_ownership(path_str, FileOwnership::new(current_uid, current_gid));
+    }
+    
+    // Then call the real mknod
+    unsafe { platform::real_mknod(pathname, mode, dev) }
+}
+
+/// Create a special file relative to directory file descriptor
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn mknodat(
+    dirfd: i32,
+    pathname: *const c_char,
+    mode: libc::mode_t,
+    dev: libc::dev_t,
+) -> i32 {
+    // Get current UID/GID first, then record ownership
+    let state = global_state_read();
+    let current_uid = state.current_uid();
+    let current_gid = state.current_gid();
+    
+    // Try to record the ownership for the new file in our fake state
+    let mut state_mut = global_state_write();
+    if dirfd == libc::AT_FDCWD {
+        // Relative to current directory
+        if let Some(path_str) = unsafe { cstr_to_string(pathname) } {
+            // Set ownership to current fake UID/GID
+            state_mut.set_ownership(path_str, FileOwnership::new(current_uid, current_gid));
+        }
+    } else {
+        // For now, we can't easily resolve dirfd+path to a full path
+        // Just try to record the path component
+        if let Some(path_str) = unsafe { cstr_to_string(pathname) } {
+            state_mut.set_ownership(path_str, FileOwnership::new(current_uid, current_gid));
+        }
+    }
+    
+    // Then call the real mknodat
+    unsafe { platform::real_mknodat(dirfd, pathname, mode, dev) }
+}
+
+/// Set supplementary group IDs - always succeeds in fake mode
+#[unsafe(no_mangle)]
+pub extern "C" fn setgroups(_size: i32, _list: *const libc::gid_t) -> i32 {
+    // In fake mode, we just succeed (don't actually change groups)
+    0
+}
+
+/// Set capabilities - always succeeds in fake mode
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn capset(_hdrp: *const std::ffi::c_void, _data: *const std::ffi::c_void) -> i32 {
+    // In fake mode, we just succeed (don't actually change capabilities)
+    0
+}
+
+// xattr functions - for now, just pass through to real functions
+// In a full implementation, we might want to fake xattr ownership
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn setxattr(
+    path: *const c_char,
+    name: *const c_char,
+    value: *const std::ffi::c_void,
+    size: libc::size_t,
+    flags: i32,
+) -> i32 {
+    unsafe { platform::real_setxattr(path, name, value, size, flags) }
+}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn lsetxattr(
+    path: *const c_char,
+    name: *const c_char,
+    value: *const std::ffi::c_void,
+    size: libc::size_t,
+    flags: i32,
+) -> i32 {
+    unsafe { platform::real_lsetxattr(path, name, value, size, flags) }
+}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn fsetxattr(
+    fd: i32,
+    name: *const c_char,
+    value: *const std::ffi::c_void,
+    size: libc::size_t,
+    flags: i32,
+) -> i32 {
+    unsafe { platform::real_fsetxattr(fd, name, value, size, flags) }
+}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn getxattr(
+    path: *const c_char,
+    name: *const c_char,
+    value: *mut std::ffi::c_void,
+    size: libc::size_t,
+) -> i32 {
+    unsafe { platform::real_getxattr(path, name, value, size) }
+}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn lgetxattr(
+    path: *const c_char,
+    name: *const c_char,
+    value: *mut std::ffi::c_void,
+    size: libc::size_t,
+) -> i32 {
+    unsafe { platform::real_lgetxattr(path, name, value, size) }
+}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn fgetxattr(
+    fd: i32,
+    name: *const c_char,
+    value: *mut std::ffi::c_void,
+    size: libc::size_t,
+) -> i32 {
+    unsafe { platform::real_fgetxattr(fd, name, value, size) }
+}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn listxattr(
+    path: *const c_char,
+    list: *mut c_char,
+    size: libc::size_t,
+) -> i32 {
+    unsafe { platform::real_listxattr(path, list, size) }
+}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn llistxattr(
+    path: *const c_char,
+    list: *mut c_char,
+    size: libc::size_t,
+) -> i32 {
+    unsafe { platform::real_llistxattr(path, list, size) }
+}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn flistxattr(
+    fd: i32,
+    list: *mut c_char,
+    size: libc::size_t,
+) -> i32 {
+    unsafe { platform::real_flistxattr(fd, list, size) }
+}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn removexattr(path: *const c_char, name: *const c_char) -> i32 {
+    unsafe { platform::real_removexattr(path, name) }
+}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn lremovexattr(path: *const c_char, name: *const c_char) -> i32 {
+    unsafe { platform::real_lremovexattr(path, name) }
+}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn fremovexattr(fd: i32, name: *const c_char) -> i32 {
+    unsafe { platform::real_fremovexattr(fd, name) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

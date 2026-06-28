@@ -39,6 +39,24 @@ type RmdirFn = unsafe extern "C" fn(*const c_char) -> i32;
 type RenameFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
 type RenameatFn = unsafe extern "C" fn(i32, *const c_char, i32, *const c_char) -> i32;
 type Renameat2Fn = unsafe extern "C" fn(i32, *const c_char, i32, *const c_char, u32) -> i32;
+type MknodFn = unsafe extern "C" fn(*const c_char, libc::mode_t, libc::dev_t) -> i32;
+type MknodatFn = unsafe extern "C" fn(i32, *const c_char, libc::mode_t, libc::dev_t) -> i32;
+type SetgroupsFn = unsafe extern "C" fn(i32, *const libc::gid_t) -> i32;
+type CapsetFn = unsafe extern "C" fn(*const std::ffi::c_void, *const std::ffi::c_void) -> i32;
+
+// xattr function type aliases
+type SetxattrFn = unsafe extern "C" fn(*const c_char, *const c_char, *const std::ffi::c_void, libc::size_t, i32) -> i32;
+type LsetxattrFn = unsafe extern "C" fn(*const c_char, *const c_char, *const std::ffi::c_void, libc::size_t, i32) -> i32;
+type FsetxattrFn = unsafe extern "C" fn(i32, *const c_char, *const std::ffi::c_void, libc::size_t, i32) -> i32;
+type GetxattrFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut std::ffi::c_void, libc::size_t) -> i32;
+type LgetxattrFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut std::ffi::c_void, libc::size_t) -> i32;
+type FgetxattrFn = unsafe extern "C" fn(i32, *const c_char, *mut std::ffi::c_void, libc::size_t) -> i32;
+type ListxattrFn = unsafe extern "C" fn(*const c_char, *mut c_char, libc::size_t) -> i32;
+type LlistxattrFn = unsafe extern "C" fn(*const c_char, *mut c_char, libc::size_t) -> i32;
+type FlistxattrFn = unsafe extern "C" fn(i32, *mut c_char, libc::size_t) -> i32;
+type RemovexattrFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
+type LremovexattrFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
+type FremovexattrFn = unsafe extern "C" fn(i32, *const c_char) -> i32;
 
 // Use OnceLock for thread-safe lazy initialization
 static REAL_STAT: OnceLock<StatFn> = OnceLock::new();
@@ -72,6 +90,23 @@ static REAL_SETFSGID: OnceLock<SetfsgidFn> = OnceLock::new();
     static REAL_RENAME: OnceLock<RenameFn> = OnceLock::new();
     static REAL_RENAMEAT: OnceLock<RenameatFn> = OnceLock::new();
     static REAL_RENAMEAT2: OnceLock<Renameat2Fn> = OnceLock::new();
+    static REAL_MKNOD: OnceLock<MknodFn> = OnceLock::new();
+    static REAL_MKNODAT: OnceLock<MknodatFn> = OnceLock::new();
+    static REAL_SETGROUPS: OnceLock<SetgroupsFn> = OnceLock::new();
+    static REAL_CAPSET: OnceLock<CapsetFn> = OnceLock::new();
+    // xattr statics
+    static REAL_SETXATTR: OnceLock<SetxattrFn> = OnceLock::new();
+    static REAL_LSETXATTR: OnceLock<LsetxattrFn> = OnceLock::new();
+    static REAL_FSETXATTR: OnceLock<FsetxattrFn> = OnceLock::new();
+    static REAL_GETXATTR: OnceLock<GetxattrFn> = OnceLock::new();
+    static REAL_LGETXATTR: OnceLock<LgetxattrFn> = OnceLock::new();
+    static REAL_FGETXATTR: OnceLock<FgetxattrFn> = OnceLock::new();
+    static REAL_LISTXATTR: OnceLock<ListxattrFn> = OnceLock::new();
+    static REAL_LLISTXATTR: OnceLock<LlistxattrFn> = OnceLock::new();
+    static REAL_FLISTXATTR: OnceLock<FlistxattrFn> = OnceLock::new();
+    static REAL_REMOVEXATTR: OnceLock<RemovexattrFn> = OnceLock::new();
+    static REAL_LREMOVEXATTR: OnceLock<LremovexattrFn> = OnceLock::new();
+    static REAL_FREMOVEXATTR: OnceLock<FremovexattrFn> = OnceLock::new();
 
 /// Initialize the function pointers by looking up the real functions
 #[ctor::ctor]
@@ -108,6 +143,23 @@ fn init() {
         REAL_RENAME.set(get_next_function::<RenameFn>(b"rename\0")).ok();
         REAL_RENAMEAT.set(get_next_function::<RenameatFn>(b"renameat\0")).ok();
         REAL_RENAMEAT2.set(get_next_function::<Renameat2Fn>(b"renameat2\0")).ok();
+        REAL_MKNOD.set(get_next_function::<MknodFn>(b"mknod\0")).ok();
+        REAL_MKNODAT.set(get_next_function::<MknodatFn>(b"mknodat\0")).ok();
+        REAL_SETGROUPS.set(get_next_function::<SetgroupsFn>(b"setgroups\0")).ok();
+        REAL_CAPSET.set(get_next_function::<CapsetFn>(b"capset\0")).ok();
+        // xattr functions
+        REAL_SETXATTR.set(get_next_function::<SetxattrFn>(b"setxattr\0")).ok();
+        REAL_LSETXATTR.set(get_next_function::<LsetxattrFn>(b"lsetxattr\0")).ok();
+        REAL_FSETXATTR.set(get_next_function::<FsetxattrFn>(b"fsetxattr\0")).ok();
+        REAL_GETXATTR.set(get_next_function::<GetxattrFn>(b"getxattr\0")).ok();
+        REAL_LGETXATTR.set(get_next_function::<LgetxattrFn>(b"lgetxattr\0")).ok();
+        REAL_FGETXATTR.set(get_next_function::<FgetxattrFn>(b"fgetxattr\0")).ok();
+        REAL_LISTXATTR.set(get_next_function::<ListxattrFn>(b"listxattr\0")).ok();
+        REAL_LLISTXATTR.set(get_next_function::<LlistxattrFn>(b"llistxattr\0")).ok();
+        REAL_FLISTXATTR.set(get_next_function::<FlistxattrFn>(b"flistxattr\0")).ok();
+        REAL_REMOVEXATTR.set(get_next_function::<RemovexattrFn>(b"removexattr\0")).ok();
+        REAL_LREMOVEXATTR.set(get_next_function::<LremovexattrFn>(b"lremovexattr\0")).ok();
+        REAL_FREMOVEXATTR.set(get_next_function::<FremovexattrFn>(b"fremovexattr\0")).ok();
     }
 }
 
@@ -405,6 +457,152 @@ impl PlatformHelper for LinuxHelper {
             libc::renameat2(olddirfd, oldpath, newdirfd, newpath, flags)
         }
     }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_mknod(pathname: *const c_char, mode: libc::mode_t, dev: libc::dev_t) -> i32 {
+        if let Some(func) = REAL_MKNOD.get() {
+            func(pathname, mode, dev)
+        } else {
+            // SYS_mknod may not exist on all architectures (e.g., aarch64)
+            // Use mknodat with AT_FDCWD instead
+            libc::syscall(libc::SYS_mknodat, libc::AT_FDCWD, pathname, mode, dev) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_mknodat(dirfd: i32, pathname: *const c_char, mode: libc::mode_t, dev: libc::dev_t) -> i32 {
+        if let Some(func) = REAL_MKNODAT.get() {
+            func(dirfd, pathname, mode, dev)
+        } else {
+            libc::syscall(libc::SYS_mknodat, dirfd, pathname, mode, dev) as i32
+        }
+    }
+
+    unsafe fn real_setgroups(size: i32, list: *const libc::gid_t) -> i32 {
+        if let Some(func) = REAL_SETGROUPS.get() {
+            func(size, list)
+        } else {
+            libc::setgroups(size as usize, list)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_capset(hdrp: *const std::ffi::c_void, data: *const std::ffi::c_void) -> i32 {
+        if let Some(func) = REAL_CAPSET.get() {
+            func(hdrp, data)
+        } else {
+            libc::syscall(libc::SYS_capset, hdrp, data) as i32
+        }
+    }
+
+    // xattr functions - all just pass through for now
+    #[cfg(target_os = "linux")]
+    unsafe fn real_setxattr(path: *const c_char, name: *const c_char, value: *const std::ffi::c_void, size: libc::size_t, flags: i32) -> i32 {
+        if let Some(func) = REAL_SETXATTR.get() {
+            func(path, name, value, size, flags)
+        } else {
+            libc::syscall(libc::SYS_setxattr, path, name, value, size, flags) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_lsetxattr(path: *const c_char, name: *const c_char, value: *const std::ffi::c_void, size: libc::size_t, flags: i32) -> i32 {
+        if let Some(func) = REAL_LSETXATTR.get() {
+            func(path, name, value, size, flags)
+        } else {
+            libc::syscall(libc::SYS_lsetxattr, path, name, value, size, flags) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_fsetxattr(fd: i32, name: *const c_char, value: *const std::ffi::c_void, size: libc::size_t, flags: i32) -> i32 {
+        if let Some(func) = REAL_FSETXATTR.get() {
+            func(fd, name, value, size, flags)
+        } else {
+            libc::syscall(libc::SYS_fsetxattr, fd, name, value, size, flags) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_getxattr(path: *const c_char, name: *const c_char, value: *mut std::ffi::c_void, size: libc::size_t) -> i32 {
+        if let Some(func) = REAL_GETXATTR.get() {
+            func(path, name, value, size)
+        } else {
+            libc::syscall(libc::SYS_getxattr, path, name, value, size) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_lgetxattr(path: *const c_char, name: *const c_char, value: *mut std::ffi::c_void, size: libc::size_t) -> i32 {
+        if let Some(func) = REAL_LGETXATTR.get() {
+            func(path, name, value, size)
+        } else {
+            libc::syscall(libc::SYS_lgetxattr, path, name, value, size) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_fgetxattr(fd: i32, name: *const c_char, value: *mut std::ffi::c_void, size: libc::size_t) -> i32 {
+        if let Some(func) = REAL_FGETXATTR.get() {
+            func(fd, name, value, size)
+        } else {
+            libc::syscall(libc::SYS_fgetxattr, fd, name, value, size) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_listxattr(path: *const c_char, list: *mut c_char, size: libc::size_t) -> i32 {
+        if let Some(func) = REAL_LISTXATTR.get() {
+            func(path, list, size)
+        } else {
+            libc::syscall(libc::SYS_listxattr, path, list, size) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_llistxattr(path: *const c_char, list: *mut c_char, size: libc::size_t) -> i32 {
+        if let Some(func) = REAL_LLISTXATTR.get() {
+            func(path, list, size)
+        } else {
+            libc::syscall(libc::SYS_llistxattr, path, list, size) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_flistxattr(fd: i32, list: *mut c_char, size: libc::size_t) -> i32 {
+        if let Some(func) = REAL_FLISTXATTR.get() {
+            func(fd, list, size)
+        } else {
+            libc::syscall(libc::SYS_flistxattr, fd, list, size) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_removexattr(path: *const c_char, name: *const c_char) -> i32 {
+        if let Some(func) = REAL_REMOVEXATTR.get() {
+            func(path, name)
+        } else {
+            libc::syscall(libc::SYS_removexattr, path, name) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_lremovexattr(path: *const c_char, name: *const c_char) -> i32 {
+        if let Some(func) = REAL_LREMOVEXATTR.get() {
+            func(path, name)
+        } else {
+            libc::syscall(libc::SYS_lremovexattr, path, name) as i32
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn real_fremovexattr(fd: i32, name: *const c_char) -> i32 {
+        if let Some(func) = REAL_FREMOVEXATTR.get() {
+            func(fd, name)
+        } else {
+            libc::syscall(libc::SYS_fremovexattr, fd, name) as i32
+        }
+    }
 }
 
 // Re-export the functions for use in the main lib.rs
@@ -559,4 +757,84 @@ pub unsafe fn real_renameat(olddirfd: i32, oldpath: *const c_char, newdirfd: i32
 #[cfg(target_os = "linux")]
 pub unsafe fn real_renameat2(olddirfd: i32, oldpath: *const c_char, newdirfd: i32, newpath: *const c_char, flags: u32) -> i32 {
     LinuxHelper::real_renameat2(olddirfd, oldpath, newdirfd, newpath, flags)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_mknod(pathname: *const c_char, mode: libc::mode_t, dev: libc::dev_t) -> i32 {
+    LinuxHelper::real_mknod(pathname, mode, dev)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_mknodat(dirfd: i32, pathname: *const c_char, mode: libc::mode_t, dev: libc::dev_t) -> i32 {
+    LinuxHelper::real_mknodat(dirfd, pathname, mode, dev)
+}
+
+pub unsafe fn real_setgroups(size: i32, list: *const libc::gid_t) -> i32 {
+    LinuxHelper::real_setgroups(size, list)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_capset(hdrp: *const std::ffi::c_void, data: *const std::ffi::c_void) -> i32 {
+    LinuxHelper::real_capset(hdrp, data)
+}
+
+// xattr public re-exports
+#[cfg(target_os = "linux")]
+pub unsafe fn real_setxattr(path: *const c_char, name: *const c_char, value: *const std::ffi::c_void, size: libc::size_t, flags: i32) -> i32 {
+    LinuxHelper::real_setxattr(path, name, value, size, flags)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_lsetxattr(path: *const c_char, name: *const c_char, value: *const std::ffi::c_void, size: libc::size_t, flags: i32) -> i32 {
+    LinuxHelper::real_lsetxattr(path, name, value, size, flags)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_fsetxattr(fd: i32, name: *const c_char, value: *const std::ffi::c_void, size: libc::size_t, flags: i32) -> i32 {
+    LinuxHelper::real_fsetxattr(fd, name, value, size, flags)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_getxattr(path: *const c_char, name: *const c_char, value: *mut std::ffi::c_void, size: libc::size_t) -> i32 {
+    LinuxHelper::real_getxattr(path, name, value, size)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_lgetxattr(path: *const c_char, name: *const c_char, value: *mut std::ffi::c_void, size: libc::size_t) -> i32 {
+    LinuxHelper::real_lgetxattr(path, name, value, size)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_fgetxattr(fd: i32, name: *const c_char, value: *mut std::ffi::c_void, size: libc::size_t) -> i32 {
+    LinuxHelper::real_fgetxattr(fd, name, value, size)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_listxattr(path: *const c_char, list: *mut c_char, size: libc::size_t) -> i32 {
+    LinuxHelper::real_listxattr(path, list, size)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_llistxattr(path: *const c_char, list: *mut c_char, size: libc::size_t) -> i32 {
+    LinuxHelper::real_llistxattr(path, list, size)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_flistxattr(fd: i32, list: *mut c_char, size: libc::size_t) -> i32 {
+    LinuxHelper::real_flistxattr(fd, list, size)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_removexattr(path: *const c_char, name: *const c_char) -> i32 {
+    LinuxHelper::real_removexattr(path, name)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_lremovexattr(path: *const c_char, name: *const c_char) -> i32 {
+    LinuxHelper::real_lremovexattr(path, name)
+}
+
+#[cfg(target_os = "linux")]
+pub unsafe fn real_fremovexattr(fd: i32, name: *const c_char) -> i32 {
+    LinuxHelper::real_fremovexattr(fd, name)
 }

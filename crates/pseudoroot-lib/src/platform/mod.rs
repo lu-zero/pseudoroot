@@ -146,6 +146,130 @@ pub trait PlatformHelper {
         newpath: *const std::os::raw::c_char,
         flags: u32,
     ) -> i32;
+
+    /// Get the real mknod function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_mknod(
+        pathname: *const std::os::raw::c_char,
+        mode: libc::mode_t,
+        dev: libc::dev_t,
+    ) -> i32;
+
+    /// Get the real mknodat function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_mknodat(
+        dirfd: i32,
+        pathname: *const std::os::raw::c_char,
+        mode: libc::mode_t,
+        dev: libc::dev_t,
+    ) -> i32;
+
+    /// Get the real setgroups function
+    unsafe fn real_setgroups(size: i32, list: *const libc::gid_t) -> i32;
+
+    /// Get the real capset function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_capset(hdrp: *const std::ffi::c_void, data: *const std::ffi::c_void) -> i32;
+
+    // xattr functions
+    /// Get the real setxattr function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_setxattr(
+        path: *const std::os::raw::c_char,
+        name: *const std::os::raw::c_char,
+        value: *const std::os::raw::c_void,
+        size: libc::size_t,
+        flags: i32,
+    ) -> i32;
+
+    /// Get the real lsetxattr function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_lsetxattr(
+        path: *const std::os::raw::c_char,
+        name: *const std::os::raw::c_char,
+        value: *const std::os::raw::c_void,
+        size: libc::size_t,
+        flags: i32,
+    ) -> i32;
+
+    /// Get the real fsetxattr function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_fsetxattr(
+        fd: i32,
+        name: *const std::os::raw::c_char,
+        value: *const std::os::raw::c_void,
+        size: libc::size_t,
+        flags: i32,
+    ) -> i32;
+
+    /// Get the real getxattr function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_getxattr(
+        path: *const std::os::raw::c_char,
+        name: *const std::os::raw::c_char,
+        value: *mut std::os::raw::c_void,
+        size: libc::size_t,
+    ) -> i32;
+
+    /// Get the real lgetxattr function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_lgetxattr(
+        path: *const std::os::raw::c_char,
+        name: *const std::os::raw::c_char,
+        value: *mut std::os::raw::c_void,
+        size: libc::size_t,
+    ) -> i32;
+
+    /// Get the real fgetxattr function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_fgetxattr(
+        fd: i32,
+        name: *const std::os::raw::c_char,
+        value: *mut std::os::raw::c_void,
+        size: libc::size_t,
+    ) -> i32;
+
+    /// Get the real listxattr function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_listxattr(
+        path: *const std::os::raw::c_char,
+        list: *mut std::os::raw::c_char,
+        size: libc::size_t,
+    ) -> i32;
+
+    /// Get the real llistxattr function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_llistxattr(
+        path: *const std::os::raw::c_char,
+        list: *mut std::os::raw::c_char,
+        size: libc::size_t,
+    ) -> i32;
+
+    /// Get the real flistxattr function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_flistxattr(
+        fd: i32,
+        list: *mut std::os::raw::c_char,
+        size: libc::size_t,
+    ) -> i32;
+
+    /// Get the real removexattr function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_removexattr(
+        path: *const std::os::raw::c_char,
+        name: *const std::os::raw::c_char,
+    ) -> i32;
+
+    /// Get the real lremovexattr function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_lremovexattr(
+        path: *const std::os::raw::c_char,
+        name: *const std::os::raw::c_char,
+    ) -> i32;
+
+    /// Get the real fremovexattr function
+    #[cfg(target_os = "linux")]
+    unsafe fn real_fremovexattr(fd: i32, name: *const std::os::raw::c_char) -> i32;
 }
 
 #[cfg(target_os = "linux")]
