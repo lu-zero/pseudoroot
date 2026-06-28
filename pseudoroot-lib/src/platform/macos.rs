@@ -28,7 +28,7 @@ type FchownatFn = unsafe extern "C" fn(i32, *const c_char, u32, u32, i32) -> i32
 
 // stat family extensions
 type FstatatFn = unsafe extern "C" fn(i32, *const c_char, *mut libc::stat, i32) -> i32;
-type StatxFn = unsafe extern "C" fn(i32, *const c_char, *mut std::ffi::c_void, u32, i32) -> i32;
+type StatxFn = unsafe extern "C" fn(i32, *const c_char, i32, u32, *mut std::ffi::c_void) -> i32;
 
 // Credential functions (get)
 type GetresuidFn = unsafe extern "C" fn(*mut u32, *mut u32, *mut u32) -> i32;
@@ -43,7 +43,7 @@ type SetresuidFn = unsafe extern "C" fn(u32, u32, u32) -> i32;
 type SetresgidFn = unsafe extern "C" fn(u32, u32, u32) -> i32;
 type SetfsuidFn = unsafe extern "C" fn(u32) -> i32;
 type SetfsgidFn = unsafe extern "C" fn(u32) -> i32;
-type SetgroupsFn = unsafe extern "C" fn(i32, *const libc::gid_t) -> i32;
+type SetgroupsFn = unsafe extern "C" fn(libc::size_t, *const libc::gid_t) -> i32;
 type CapsetFn = unsafe extern "C" fn(*const std::ffi::c_void, *const std::ffi::c_void) -> i32;
 
 // chmod family
@@ -183,9 +183,7 @@ fn init() {
         REAL_FSTATAT
             .set(get_next_function::<FstatatFn>(b"fstatat\0"))
             .ok();
-        REAL_STATX
-            .set(get_next_function::<StatxFn>(b"statx\0"))
-            .ok();
+        set_optional_function(&REAL_STATX, b"statx\0");
         REAL_GETRESUID
             .set(get_next_function::<GetresuidFn>(b"getresuid\0"))
             .ok();
@@ -219,9 +217,7 @@ fn init() {
         REAL_SETGROUPS
             .set(get_next_function::<SetgroupsFn>(b"setgroups\0"))
             .ok();
-        REAL_CAPSET
-            .set(get_next_function::<CapsetFn>(b"capset\0"))
-            .ok();
+        set_optional_function(&REAL_CAPSET, b"capset\0");
         REAL_FCHMOD
             .set(get_next_function::<FchmodFn>(b"fchmod\0"))
             .ok();
@@ -243,9 +239,7 @@ fn init() {
         REAL_RENAMEAT
             .set(get_next_function::<RenameatFn>(b"renameat\0"))
             .ok();
-        REAL_RENAMEAT2
-            .set(get_next_function::<Renameat2Fn>(b"renameat2\0"))
-            .ok();
+        set_optional_function(&REAL_RENAMEAT2, b"renameat2\0");
         REAL_MKNOD
             .set(get_next_function::<MknodFn>(b"mknod\0"))
             .ok();
@@ -293,15 +287,29 @@ fn init() {
 
 /// Helper function to look up a function using dlsym(RTLD_NEXT)
 unsafe fn get_next_function<T>(symbol: &[u8]) -> T {
-    let handle = libc::RTLD_NEXT;
-    let ptr = libc::dlsym(handle, symbol.as_ptr() as *const c_char);
-    if ptr.is_null() {
+    try_get_next_function::<T>(symbol).unwrap_or_else(|| {
         panic!(
             "Failed to find symbol {} with RTLD_NEXT",
             String::from_utf8_lossy(symbol)
         );
+    })
+}
+
+/// Look up a function that may be absent on this platform (e.g. Linux-only syscalls).
+unsafe fn try_get_next_function<T>(symbol: &[u8]) -> Option<T> {
+    let ptr = libc::dlsym(libc::RTLD_NEXT, symbol.as_ptr() as *const c_char);
+    if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { std::mem::transmute_copy(&ptr) })
     }
-    unsafe { std::mem::transmute_copy(&ptr) }
+}
+
+/// Store a dlsym result only when the symbol exists.
+unsafe fn set_optional_function<T>(slot: &OnceLock<T>, symbol: &[u8]) {
+    if let Some(func) = try_get_next_function::<T>(symbol) {
+        let _ = slot.set(func);
+    }
 }
 
 /// macOS platform helper implementation
@@ -426,12 +434,12 @@ impl MacosHelper {
     unsafe fn real_statx(
         dirfd: i32,
         pathname: *const c_char,
-        buf: *mut std::ffi::c_void,
-        mask: u32,
         flags: i32,
+        mask: u32,
+        buf: *mut std::ffi::c_void,
     ) -> i32 {
         if let Some(func) = REAL_STATX.get() {
-            func(dirfd, pathname, buf, mask, flags)
+            func(dirfd, pathname, flags, mask, buf)
         } else {
             libc::ENOSYS
         }
@@ -517,11 +525,11 @@ impl MacosHelper {
         }
     }
 
-    unsafe fn real_setgroups(size: i32, list: *const libc::gid_t) -> i32 {
+    unsafe fn real_setgroups(size: libc::size_t, list: *const libc::gid_t) -> i32 {
         if let Some(func) = REAL_SETGROUPS.get() {
             func(size, list)
         } else {
-            libc::setgroups(size as usize, list)
+            libc::setgroups(size, list)
         }
     }
 
@@ -831,11 +839,11 @@ pub unsafe fn real_fstatat(
 pub unsafe fn real_statx(
     dirfd: i32,
     pathname: *const c_char,
-    buf: *mut std::ffi::c_void,
-    mask: u32,
     flags: i32,
+    mask: u32,
+    buf: *mut std::ffi::c_void,
 ) -> i32 {
-    MacosHelper::real_statx(dirfd, pathname, buf, mask, flags)
+    MacosHelper::real_statx(dirfd, pathname, flags, mask, buf)
 }
 
 pub unsafe fn real_getresuid(ruid: *mut u32, euid: *mut u32, suid: *mut u32) -> i32 {
@@ -878,7 +886,7 @@ pub unsafe fn real_setfsgid(gid: u32) -> i32 {
     MacosHelper::real_setfsgid(gid)
 }
 
-pub unsafe fn real_setgroups(size: i32, list: *const libc::gid_t) -> i32 {
+pub unsafe fn real_setgroups(size: libc::size_t, list: *const libc::gid_t) -> i32 {
     MacosHelper::real_setgroups(size, list)
 }
 

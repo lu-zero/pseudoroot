@@ -202,3 +202,65 @@ int main() {
     let _ = std::fs::remove_file("/tmp/test_chown_c");
     let _ = std::fs::remove_file("/tmp/test_chown_c.c");
 }
+
+/// Test that statx passthrough works with the correct C ABI.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_statx_interposition_with_c() {
+    let test_file = "/tmp/pseudoroot_statx_test";
+    create_test_file(test_file);
+
+    let pseudoroot_bin = find_pseudoroot_bin();
+
+    let c_template = r##"#define _GNU_SOURCE
+#include <fcntl.h>
+#include <stdio.h>
+#include <sys/stat.h>
+int main() {
+    struct statx stx;
+    if (statx(AT_FDCWD, "XFILEX", 0, STATX_BASIC_STATS, &stx) != 0) {
+        perror("statx");
+        return 1;
+    }
+    printf("%05o %05u %05u\n", stx.stx_mode & 07777, stx.stx_uid, stx.stx_gid);
+    return 0;
+}
+"##;
+
+    let c_program = c_template.replace("XFILEX", test_file);
+    let _ = std::fs::write("/tmp/test_statx_c.c", &c_program);
+
+    let output = run_c_program_through_pseudoroot(
+        &pseudoroot_bin,
+        "/tmp/test_statx_c.c",
+        "/tmp/test_statx_c",
+        0,
+        0,
+    );
+
+    let output = match output {
+        Some(o) => o,
+        None => {
+            cleanup_test_file(test_file);
+            let _ = std::fs::remove_file("/tmp/test_statx_c.c");
+            return;
+        }
+    };
+
+    assert!(
+        output.status.success(),
+        "statx should succeed through pseudoroot: {}",
+        str::from_utf8(&output.stderr).unwrap_or("")
+    );
+
+    let stdout = str::from_utf8(&output.stdout).unwrap_or("");
+    let trimmed = stdout.trim();
+    assert!(
+        !trimmed.is_empty(),
+        "statx should return file metadata, got empty output"
+    );
+
+    cleanup_test_file(test_file);
+    let _ = std::fs::remove_file("/tmp/test_statx_c");
+    let _ = std::fs::remove_file("/tmp/test_statx_c.c");
+}

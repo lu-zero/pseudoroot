@@ -345,13 +345,13 @@ pub extern "C" fn fstatat(
 pub extern "C" fn statx(
     dirfd: i32,
     pathname: *const c_char,
-    buf: *mut std::ffi::c_void,
-    mask: u32,
     flags: i32,
+    mask: u32,
+    buf: *mut std::ffi::c_void,
 ) -> i32 {
     // For now, just pass through to the real statx
     // In a full implementation, we would modify the ownership fields in the statx buffer
-    unsafe { platform::real_statx(dirfd, pathname, buf, mask, flags) }
+    unsafe { platform::real_statx(dirfd, pathname, flags, mask, buf) }
 }
 
 /// Change file mode
@@ -581,7 +581,7 @@ pub extern "C" fn mknodat(
 
 /// Set supplementary group IDs - always succeeds in fake mode
 #[unsafe(no_mangle)]
-pub extern "C" fn setgroups(_size: i32, _list: *const libc::gid_t) -> i32 {
+pub extern "C" fn setgroups(_size: libc::size_t, _list: *const libc::gid_t) -> i32 {
     // In fake mode, we just succeed (don't actually change groups)
     0
 }

@@ -19,7 +19,7 @@ type ChmodFn = unsafe extern "C" fn(*const c_char, libc::mode_t) -> i32;
 type LchownFn = unsafe extern "C" fn(*const c_char, u32, u32) -> i32;
 type FchownFn = unsafe extern "C" fn(i32, u32, u32) -> i32;
 type FstatatFn = unsafe extern "C" fn(i32, *const c_char, *mut libc::stat, i32) -> i32;
-type StatxFn = unsafe extern "C" fn(i32, *const c_char, *mut std::ffi::c_void, u32, i32) -> i32;
+type StatxFn = unsafe extern "C" fn(i32, *const c_char, i32, u32, *mut std::ffi::c_void) -> i32;
 type FchownatFn = unsafe extern "C" fn(i32, *const c_char, u32, u32, i32) -> i32;
 type FchmodFn = unsafe extern "C" fn(i32, libc::mode_t) -> i32;
 type FchmodatFn = unsafe extern "C" fn(i32, *const c_char, libc::mode_t, i32) -> i32;
@@ -41,7 +41,7 @@ type RenameatFn = unsafe extern "C" fn(i32, *const c_char, i32, *const c_char) -
 type Renameat2Fn = unsafe extern "C" fn(i32, *const c_char, i32, *const c_char, u32) -> i32;
 type MknodFn = unsafe extern "C" fn(*const c_char, libc::mode_t, libc::dev_t) -> i32;
 type MknodatFn = unsafe extern "C" fn(i32, *const c_char, libc::mode_t, libc::dev_t) -> i32;
-type SetgroupsFn = unsafe extern "C" fn(i32, *const libc::gid_t) -> i32;
+type SetgroupsFn = unsafe extern "C" fn(libc::size_t, *const libc::gid_t) -> i32;
 type CapsetFn = unsafe extern "C" fn(*const std::ffi::c_void, *const std::ffi::c_void) -> i32;
 
 // xattr function type aliases
@@ -400,16 +400,15 @@ impl LinuxHelper {
     unsafe fn real_statx(
         dirfd: i32,
         pathname: *const c_char,
-        buf: *mut std::ffi::c_void,
-        mask: u32,
         flags: i32,
+        mask: u32,
+        buf: *mut std::ffi::c_void,
     ) -> i32 {
         if let Some(func) = REAL_STATX.get() {
-            func(dirfd, pathname, buf, mask, flags)
+            func(dirfd, pathname, flags, mask, buf)
         } else {
-            // libc statx has different signature - we'll use syscall directly
-            // For now, just call the real function via syscall
-            libc::syscall(libc::SYS_statx, dirfd, pathname, buf, mask, flags) as i32
+            // Use the syscall directly: calling libc::statx would recurse through our hook.
+            libc::syscall(libc::SYS_statx, dirfd, pathname, flags, mask, buf) as i32
         }
     }
 
@@ -617,11 +616,11 @@ impl LinuxHelper {
         }
     }
 
-    unsafe fn real_setgroups(size: i32, list: *const libc::gid_t) -> i32 {
+    unsafe fn real_setgroups(size: libc::size_t, list: *const libc::gid_t) -> i32 {
         if let Some(func) = REAL_SETGROUPS.get() {
             func(size, list)
         } else {
-            libc::setgroups(size as usize, list)
+            libc::setgroups(size, list)
         }
     }
 
@@ -836,11 +835,11 @@ pub unsafe fn real_fstatat(
 pub unsafe fn real_statx(
     dirfd: i32,
     pathname: *const c_char,
-    buf: *mut std::ffi::c_void,
-    mask: u32,
     flags: i32,
+    mask: u32,
+    buf: *mut std::ffi::c_void,
 ) -> i32 {
-    LinuxHelper::real_statx(dirfd, pathname, buf, mask, flags)
+    LinuxHelper::real_statx(dirfd, pathname, flags, mask, buf)
 }
 
 #[cfg(target_os = "linux")]
@@ -962,7 +961,7 @@ pub unsafe fn real_mknodat(
     LinuxHelper::real_mknodat(dirfd, pathname, mode, dev)
 }
 
-pub unsafe fn real_setgroups(size: i32, list: *const libc::gid_t) -> i32 {
+pub unsafe fn real_setgroups(size: libc::size_t, list: *const libc::gid_t) -> i32 {
     LinuxHelper::real_setgroups(size, list)
 }
 

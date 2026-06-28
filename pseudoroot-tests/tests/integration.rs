@@ -165,17 +165,11 @@ fn test_stat_command() {
 
     let output = run_pseudoroot_command(&["stat", "--format=%u", test_file], 0, 0);
 
-    // stat might fail if statx is not properly handled, but that's ok for this test
-    // The important thing is that the command ran through pseudoroot
-    if !output.status.success() {
-        let stderr = str::from_utf8(&output.stderr).unwrap_or("");
-        // If it fails due to statx, that's a known limitation
-        assert!(
-            stderr.contains("statx") || stderr.contains("No such file"),
-            "stat failed with unexpected error: {}",
-            stderr
-        );
-    }
+    assert!(
+        output.status.success(),
+        "stat should succeed through pseudoroot: {}",
+        str::from_utf8(&output.stderr).unwrap_or("")
+    );
 
     cleanup_test_file(test_file);
 }
