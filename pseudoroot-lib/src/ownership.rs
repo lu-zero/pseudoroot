@@ -169,16 +169,50 @@ fn remove_inode(key: InodeKey) {
     }
 }
 
-fn merge_chown_ownership(key: InodeKey, uid: u32, gid: u32) -> FakeInode {
-    let mut inode =
-        get_inode(key).unwrap_or_else(|| FakeInode::new(current_fake_uid(), current_fake_gid()));
-    if uid != ID_UNCHANGED {
-        inode.uid = uid;
+/// Record a chown against `key` in one map update (avoids get+set double lookup).
+fn record_chown_key(key: InodeKey, uid: u32, gid: u32) {
+    if daemon_mode_active() {
+        let mut inode =
+            daemon_get_inode(key).unwrap_or_else(|| FakeInode::new(current_fake_uid(), current_fake_gid()));
+        if uid != ID_UNCHANGED {
+            inode.uid = uid;
+        }
+        if gid != ID_UNCHANGED {
+            inode.gid = gid;
+        }
+        let _ = daemon_set_inode(key, &inode);
+        return;
     }
-    if gid != ID_UNCHANGED {
-        inode.gid = gid;
+
+    let fake_uid = current_fake_uid();
+    let fake_gid = current_fake_gid();
+    let inode = {
+        let state = global_state_write();
+        let entry = state.inode_map.entry(key);
+        let inode_ref = entry
+            .and_modify(|inode| {
+                if uid != ID_UNCHANGED {
+                    inode.uid = uid;
+                }
+                if gid != ID_UNCHANGED {
+                    inode.gid = gid;
+                }
+            })
+            .or_insert_with(|| {
+                let mut inode = FakeInode::new(fake_uid, fake_gid);
+                if uid != ID_UNCHANGED {
+                    inode.uid = uid;
+                }
+                if gid != ID_UNCHANGED {
+                    inode.gid = gid;
+                }
+                inode
+            });
+        inode_ref.clone()
+    };
+    if daemon_mode_enabled() {
+        let _ = daemon_set_inode(key, &inode);
     }
-    inode
 }
 
 /// Compose a full mode value: keep the real type bits, override the permission bits.
@@ -216,9 +250,7 @@ pub(crate) fn record_chown_at(
     let flags = resolve_stat_flags(dirfd, path, at_flags);
     match stat_at(dirfd, path, flags) {
         Ok(st) => {
-            let key = key_from_stat(&st);
-            let inode = merge_chown_ownership(key, uid, gid);
-            set_inode(key, inode);
+            record_chown_key(key_from_stat(&st), uid, gid);
             0
         }
         Err(errno) => errno,
@@ -234,9 +266,7 @@ pub(crate) fn record_chown_path(path: *const c_char, nofollow: bool, uid: u32, g
     };
     match result {
         Ok(st) => {
-            let key = key_from_stat(&st);
-            let inode = merge_chown_ownership(key, uid, gid);
-            set_inode(key, inode);
+            record_chown_key(key_from_stat(&st), uid, gid);
             0
         }
         Err(errno) => errno,
@@ -247,9 +277,7 @@ pub(crate) fn record_chown_fd(fd: i32, uid: u32, gid: u32) -> i32 {
     ensure_library_init();
     match fstat_fd(fd) {
         Ok(st) => {
-            let key = key_from_stat(&st);
-            let inode = merge_chown_ownership(key, uid, gid);
-            set_inode(key, inode);
+            record_chown_key(key_from_stat(&st), uid, gid);
             0
         }
         Err(errno) => errno,
