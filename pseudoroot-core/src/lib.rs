@@ -4,6 +4,7 @@
 //! for the pseudoroot library interposition system.
 
 pub mod daemon_client;
+pub mod daemon_server;
 pub mod protocol;
 pub mod state;
 

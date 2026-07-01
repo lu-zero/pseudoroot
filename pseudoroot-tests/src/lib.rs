@@ -141,11 +141,9 @@ pub fn run_pseudoroot_sh(dir: &Path, script: &str) -> Output {
     use pseudoroot::FakerootCommandExt;
 
     let lib = find_pseudoroot_lib();
-    let daemon = find_pdrd_bin();
     // SAFETY: test processes are separate; env is per-invocation.
     unsafe {
         std::env::set_var(pseudoroot::LIB_PATH_ENV, &lib);
-        std::env::set_var("PSEUDOROOT_DAEMON_BIN", &daemon);
     }
 
     pseudoroot::init();
@@ -155,7 +153,6 @@ pub fn run_pseudoroot_sh(dir: &Path, script: &str) -> Output {
         .current_dir(dir)
         .env("PSEUDOROOT_UID", "0")
         .env("PSEUDOROOT_GID", "0")
-        .env("PSEUDOROOT_DAEMON_BIN", daemon)
         .fakeroot()
         .output()
         .expect("Failed to run pseudoroot shell script")

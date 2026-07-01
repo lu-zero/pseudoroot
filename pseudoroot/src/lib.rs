@@ -17,12 +17,11 @@
 //! before calling [`.fakeroot()`](FakerootCommandExt::fakeroot).
 
 use pseudoroot_core::daemon_client::DAEMON_SOCKET_ENV;
+use pseudoroot_core::daemon_server::SessionDaemon;
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
-use std::thread;
-use std::time::Duration;
+use std::process::{Command, ExitStatus};
 use tempfile::TempDir;
 
 mod sealed {
@@ -43,9 +42,9 @@ pub const LIB_PATH_ENV: &str = "PSEUDOROOT_LIB";
 /// Adds `fakeroot`-like execution to [`std::process::Command`].
 ///
 /// By default each `.fakeroot()` invocation re-executes the current program in a
-/// short-lived session that auto-starts `pdrd`, runs the target under `LD_PRELOAD`,
-/// and tears the daemon down on exit — so separate `exec`s (`install`, `tar`, …)
-/// share one inode map without manual `--daemon`.
+/// short-lived session with an in-process IPC server, runs the target under
+/// `LD_PRELOAD`, and tears down on exit — so separate `exec`s (`install`, `tar`, …)
+/// share one inode map without manual `--daemon` or a separate `pdrd` install.
 pub trait FakerootCommandExt: sealed::Sealed {
     /// Rewrite this command so that running it executes the same program under
     /// fakeroot, returning it as a plain [`std::process::Command`].
@@ -79,7 +78,7 @@ impl FakerootCommandExt for Command {
 ///
 /// Call once at the start of `main`, identical to fakeroost. On a normal launch
 /// this returns immediately. On a supervise re-exec it runs the requested command
-/// under a private `pdrd` and exits with that command's status, never returning.
+/// under a private in-process daemon and exits with that command's status, never returning.
 ///
 /// A `#[ctor]` hook also calls this before `main` so test binaries and other
 /// consumers work without an explicit call site.
@@ -143,34 +142,6 @@ pub fn library_path() -> Option<PathBuf> {
     candidates.into_iter().find(|candidate| candidate.exists())
 }
 
-/// Locate the `pdrd` / `pseudoroot-daemon` binary.
-#[must_use]
-pub fn daemon_path() -> Option<PathBuf> {
-    if let Ok(path) = env::var("PSEUDOROOT_DAEMON_BIN") {
-        let path = PathBuf::from(path);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    let mut candidates = Vec::new();
-    if let Ok(exe_path) = env::current_exe() {
-        let exe_dir = exe_path.parent().unwrap_or_else(|| Path::new("/"));
-        for name in ["pdrd", "pseudoroot-daemon"] {
-            candidates.push(exe_dir.join(name));
-            candidates.push(exe_dir.join("..").join(name));
-        }
-    }
-
-    for profile in ["debug", "release"] {
-        for name in ["pdrd", "pseudoroot-daemon"] {
-            candidates.push(PathBuf::from("target").join(profile).join(name));
-        }
-    }
-
-    candidates.into_iter().find(|candidate| candidate.exists())
-}
-
 fn session_supervision_enabled(cmd: &Command) -> bool {
     if env::var_os(SUPERVISE_VAR).is_some() {
         return false;
@@ -216,9 +187,6 @@ fn run_session(target_args: &[OsString]) -> Result<ExitStatus, String> {
              `cargo build -p pseudoroot-lib` or set {LIB_PATH_ENV}"
         )
     })?;
-    let daemon_bin = daemon_path()
-        .ok_or("could not find pdrd — build with `cargo build -p pseudoroot-daemon`")?;
-
     let uid = env_u32("PSEUDOROOT_UID", 0);
     let gid = env_u32("PSEUDOROOT_GID", 0);
 
@@ -226,8 +194,8 @@ fn run_session(target_args: &[OsString]) -> Result<ExitStatus, String> {
         TempDir::new().map_err(|err| format!("failed to create session dir: {err}"))?;
     let socket_path = socket_dir.path().join("pseudoroot.sock");
 
-    let mut daemon = spawn_session_daemon(&daemon_bin, &socket_path, uid, gid)?;
-    wait_for_socket(&socket_path)?;
+    let daemon = SessionDaemon::start(&socket_path, uid, gid)
+        .map_err(|err| format!("failed to start session daemon: {err}"))?;
 
     let mut cmd = Command::new(program);
     cmd.args(&target_args[1..]);
@@ -236,55 +204,14 @@ fn run_session(target_args: &[OsString]) -> Result<ExitStatus, String> {
             cmd.env(key, value);
         }
     }
-    cmd.env(DAEMON_SOCKET_ENV, &socket_path);
+    cmd.env(DAEMON_SOCKET_ENV, daemon.socket_path());
     apply_preload(&mut cmd, &lib_path);
 
     let status = cmd
         .status()
         .map_err(|err| format!("failed to execute supervised command: {err}"))?;
 
-    stop_session_daemon(&mut daemon, &socket_path);
     Ok(status)
-}
-
-fn spawn_session_daemon(
-    daemon_bin: &Path,
-    socket_path: &Path,
-    uid: u32,
-    gid: u32,
-) -> Result<Child, String> {
-    Command::new(daemon_bin)
-        .arg("--socket-path")
-        .arg(socket_path)
-        .arg("--uid")
-        .arg(uid.to_string())
-        .arg("--gid")
-        .arg(gid.to_string())
-        .arg("--cleanup")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|err| format!("failed to start pdrd: {err}"))
-}
-
-fn wait_for_socket(socket_path: &Path) -> Result<(), String> {
-    for _ in 0..100 {
-        if socket_path.exists() {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    Err(format!(
-        "pdrd did not create socket at {}",
-        socket_path.display()
-    ))
-}
-
-fn stop_session_daemon(daemon: &mut Child, socket_path: &Path) {
-    let _ = daemon.kill();
-    let _ = daemon.wait();
-    let _ = std::fs::remove_file(socket_path);
 }
 
 fn supervisor_exe() -> Result<PathBuf, String> {

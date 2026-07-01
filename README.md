@@ -68,7 +68,7 @@ Fake metadata is keyed by `(dev, ino)` inode identity — not paths — so renam
 
 | Mode | Scope | When to use |
 |------|-------|-------------|
-| **Session** (default) | Auto-starts a private `pdrd` per `.fakeroot()` / `pdr` invocation; shared across `exec` within that session | Package builds (`make install` → `tar`), API usage |
+| **Session** (default) | In-process IPC server per `.fakeroot()` / `pdr` invocation; shared across `exec` within that session | Package builds (`make install` → `tar`), API usage |
 | **External daemon** (`--daemon` / `PSEUDOROOT_DAEMON_SOCKET`) | Shared across separate top-level invocations via Unix socket IPC | Long-lived `pdrd`, multiple sequential `pdr` calls |
 | **Standalone** (`PSEUDOROOT_STANDALONE=1`) | In-memory per process only; inherited across `fork()` | Single-process tools, debugging |
 
@@ -79,7 +79,7 @@ Environment variables:
 - `PSEUDOROOT_DAEMON_SOCKET` — attach to an existing `pdrd` (skips session auto-start)
 - `PSEUDOROOT_STANDALONE` — per-process state only (no session `pdrd`)
 - `PSEUDOROOT_LIB` — override interposed library path
-- `PSEUDOROOT_DAEMON_BIN` — override `pdrd` discovery for session mode
+
 
 Nothing is written to disk for ownership: `chown` records fake uid/gid in the inode table; `stat`/`statx` overlay the result. The real filesystem uid/gid is unchanged.
 
