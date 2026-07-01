@@ -18,6 +18,10 @@
 
 use pseudoroot_core::daemon_client::DAEMON_SOCKET_ENV;
 use pseudoroot_core::daemon_server::SessionDaemon;
+use pseudoroot_core::shm_map::{ShmInodeMap, SHM_FD_ENV, SHM_LEN_ENV};
+
+/// Disable memfd session backing and use Unix socket IPC instead.
+pub const SESSION_SHM_ENV: &str = "PSEUDOROOT_SESSION_SHM";
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -192,10 +196,25 @@ fn run_session(target_args: &[OsString]) -> Result<ExitStatus, String> {
 
     let socket_dir =
         TempDir::new().map_err(|err| format!("failed to create session dir: {err}"))?;
-    let socket_path = socket_dir.path().join("pseudoroot.sock");
 
-    let daemon = SessionDaemon::start(&socket_path, uid, gid)
-        .map_err(|err| format!("failed to start session daemon: {err}"))?;
+    let use_shm = session_shm_enabled();
+    let shm = if use_shm {
+        Some(
+            ShmInodeMap::create(1 << 16, uid, gid)
+                .map_err(|err| format!("failed to create session shm map: {err}"))?,
+        )
+    } else {
+        None
+    };
+    let daemon = if shm.is_none() {
+        let socket_path = socket_dir.path().join("pseudoroot.sock");
+        Some(
+            SessionDaemon::start(&socket_path, uid, gid)
+                .map_err(|err| format!("failed to start session daemon: {err}"))?,
+        )
+    } else {
+        None
+    };
 
     let mut cmd = Command::new(program);
     cmd.args(&target_args[1..]);
@@ -204,7 +223,20 @@ fn run_session(target_args: &[OsString]) -> Result<ExitStatus, String> {
             cmd.env(key, value);
         }
     }
-    cmd.env(DAEMON_SOCKET_ENV, daemon.socket_path());
+    if let Some(shm) = &shm {
+        #[cfg(target_os = "linux")]
+        {
+            let fd = shm.inherited_fd();
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            if flags >= 0 {
+                let _ = unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) };
+            }
+        }
+        cmd.env(SHM_FD_ENV, shm.inherited_fd().to_string());
+        cmd.env(SHM_LEN_ENV, shm.map_len().to_string());
+    } else if let Some(daemon) = &daemon {
+        cmd.env(DAEMON_SOCKET_ENV, daemon.socket_path());
+    }
     apply_preload(&mut cmd, &lib_path);
 
     let status = cmd
@@ -212,6 +244,21 @@ fn run_session(target_args: &[OsString]) -> Result<ExitStatus, String> {
         .map_err(|err| format!("failed to execute supervised command: {err}"))?;
 
     Ok(status)
+}
+
+#[inline]
+fn session_shm_enabled() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        match env::var(SESSION_SHM_ENV) {
+            Ok(value) => value != "0" && !value.eq_ignore_ascii_case("false"),
+            Err(_) => true,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
 }
 
 fn supervisor_exe() -> Result<PathBuf, String> {

@@ -1,8 +1,8 @@
 //! In-process and standalone fake-root daemon server.
 
 use crate::protocol::{
-    InodeKeyPayload, InodeStatePayload, InodeStateResult, IpcPayload, MessageType, ProtocolMessage,
-    UidGidPayload,
+    ChownPayload, InodeKeyPayload, InodeStatePayload, InodeStateResult, IpcPayload, MessageType,
+    ProtocolMessage, UidGidPayload,
 };
 use crate::state::{FakeInode, FakeRootState};
 use std::fs;
@@ -11,15 +11,20 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+/// Concurrent daemon state shared across client handler threads.
+pub type SharedDaemonState = Arc<FakeRootState>;
 
 /// Background daemon for a single fakeroot session (no separate `pdrd` binary).
 pub struct SessionDaemon {
     socket_path: PathBuf,
     shutdown: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
+    #[allow(dead_code)]
+    state: SharedDaemonState,
 }
 
 impl SessionDaemon {
@@ -40,8 +45,9 @@ impl SessionDaemon {
         let state = new_shared_state(uid, gid);
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_accept = Arc::clone(&shutdown);
+        let accept_state = Arc::clone(&state);
         let handle = thread::spawn(move || {
-            if let Err(err) = accept_loop(listener, state, shutdown_accept, false) {
+            if let Err(err) = accept_loop(listener, accept_state, shutdown_accept, false) {
                 eprintln!("pseudoroot: session daemon stopped: {err}");
             }
         });
@@ -50,6 +56,7 @@ impl SessionDaemon {
             socket_path,
             shutdown,
             handle: Some(handle),
+            state,
         })
     }
 
@@ -57,6 +64,12 @@ impl SessionDaemon {
     #[must_use]
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
+    }
+
+    /// Shared inode table backing this session (for SHM experiments).
+    #[must_use]
+    pub fn state(&self) -> &SharedDaemonState {
+        &self.state
     }
 }
 
@@ -99,15 +112,17 @@ pub fn run_blocking(
     result
 }
 
-fn new_shared_state(uid: u32, gid: u32) -> Arc<RwLock<FakeRootState>> {
-    let mut state = FakeRootState::new();
+/// Create concurrent shared state for a daemon session.
+#[must_use]
+pub fn new_shared_state(uid: u32, gid: u32) -> SharedDaemonState {
+    let state = FakeRootState::new();
     state.set_current(uid, gid);
-    Arc::new(RwLock::new(state))
+    Arc::new(state)
 }
 
 fn accept_loop(
     listener: UnixListener,
-    state: Arc<RwLock<FakeRootState>>,
+    state: SharedDaemonState,
     shutdown: Arc<AtomicBool>,
     verbose: bool,
 ) -> io::Result<()> {
@@ -129,7 +144,7 @@ fn accept_loop(
     Ok(())
 }
 
-fn handle_client(mut stream: UnixStream, state: Arc<RwLock<FakeRootState>>, verbose: bool) {
+fn handle_client(mut stream: UnixStream, state: SharedDaemonState, verbose: bool) {
     if verbose {
         eprintln!("Daemon: New client connection");
     }
@@ -183,14 +198,10 @@ fn handle_client(mut stream: UnixStream, state: Arc<RwLock<FakeRootState>>, verb
     }
 }
 
-fn dispatch_message(
-    message: &ProtocolMessage,
-    state: &Arc<RwLock<FakeRootState>>,
-) -> ProtocolMessage {
+fn dispatch_message(message: &ProtocolMessage, state: &SharedDaemonState) -> ProtocolMessage {
     match message.message_type {
         MessageType::Ping => ProtocolMessage::response(message.request_id, b"pong".to_vec()),
         MessageType::GetCurrentUidGid => {
-            let state = state.read().expect("daemon state lock poisoned");
             let payload = UidGidPayload {
                 uid: state.current_uid(),
                 gid: state.current_gid(),
@@ -199,7 +210,6 @@ fn dispatch_message(
         }
         MessageType::SetCurrentUidGid => {
             if let Some(payload) = UidGidPayload::from_payload(&message.payload) {
-                let mut state = state.write().expect("daemon state lock poisoned");
                 state.set_current(payload.uid, payload.gid);
                 ProtocolMessage::response(message.request_id, vec![])
             } else {
@@ -208,7 +218,6 @@ fn dispatch_message(
         }
         MessageType::RegisterOwnership => {
             if let Some(payload) = InodeStatePayload::from_payload(&message.payload) {
-                let mut state = state.write().expect("daemon state lock poisoned");
                 state.set_inode(
                     (payload.dev, payload.ino),
                     FakeInode {
@@ -224,9 +233,22 @@ fn dispatch_message(
                 ProtocolMessage::error(message.request_id, "Invalid InodeStatePayload")
             }
         }
+        MessageType::UpsertChown => {
+            if let Some(payload) = ChownPayload::from_payload(&message.payload) {
+                state.upsert_chown(
+                    (payload.dev, payload.ino),
+                    payload.uid,
+                    payload.gid,
+                    payload.default_uid,
+                    payload.default_gid,
+                );
+                ProtocolMessage::response(message.request_id, vec![])
+            } else {
+                ProtocolMessage::error(message.request_id, "Invalid ChownPayload")
+            }
+        }
         MessageType::GetOwnership => {
             if let Some(payload) = InodeKeyPayload::from_payload(&message.payload) {
-                let state = state.read().expect("daemon state lock poisoned");
                 let result = if let Some(inode) = state.get_inode((payload.dev, payload.ino)) {
                     InodeStateResult {
                         found: true,
@@ -253,7 +275,6 @@ fn dispatch_message(
         }
         MessageType::RemoveOwnership => {
             if let Some(payload) = InodeKeyPayload::from_payload(&message.payload) {
-                let mut state = state.write().expect("daemon state lock poisoned");
                 state.remove_inode((payload.dev, payload.ino));
                 ProtocolMessage::response(message.request_id, vec![])
             } else {
@@ -262,7 +283,6 @@ fn dispatch_message(
         }
         MessageType::Init => {
             if let Some(payload) = UidGidPayload::from_payload(&message.payload) {
-                let mut state = state.write().expect("daemon state lock poisoned");
                 state.set_current(payload.uid, payload.gid);
                 ProtocolMessage::response(message.request_id, vec![])
             } else {

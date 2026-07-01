@@ -172,7 +172,7 @@ impl FakeRootState {
 
     /// Set the current fake UID and GID
     #[inline]
-    pub fn set_current(&mut self, uid: u32, gid: u32) {
+    pub fn set_current(&self, uid: u32, gid: u32) {
         self.current_uid.store(uid, Ordering::Relaxed);
         self.current_gid.store(gid, Ordering::Relaxed);
     }
@@ -193,7 +193,7 @@ impl FakeRootState {
 
     /// Record fake metadata for an inode (lock-free concurrent insert)
     #[inline]
-    pub fn set_inode(&mut self, key: InodeKey, inode: FakeInode) {
+    pub fn set_inode(&self, key: InodeKey, inode: FakeInode) {
         self.inode_map.insert(key, inode);
     }
 
@@ -206,13 +206,48 @@ impl FakeRootState {
 
     /// Drop the fake metadata entry for an inode
     #[inline]
-    pub fn remove_inode(&mut self, key: InodeKey) -> Option<FakeInode> {
+    pub fn remove_inode(&self, key: InodeKey) -> Option<FakeInode> {
         self.inode_map.remove(&key).map(|(_, v)| v)
+    }
+
+    /// Sentinel for leaving one id unchanged in [`Self::upsert_chown`].
+    pub const ID_UNCHANGED: u32 = u32::MAX;
+
+    /// Merge a chown into the inode map in one lock-free update.
+    #[inline]
+    pub fn upsert_chown(
+        &self,
+        key: InodeKey,
+        uid: u32,
+        gid: u32,
+        default_uid: u32,
+        default_gid: u32,
+    ) {
+        self.inode_map
+            .entry(key)
+            .and_modify(|inode| {
+                if uid != Self::ID_UNCHANGED {
+                    inode.uid = uid;
+                }
+                if gid != Self::ID_UNCHANGED {
+                    inode.gid = gid;
+                }
+            })
+            .or_insert_with(|| {
+                let mut inode = FakeInode::new(default_uid, default_gid);
+                if uid != Self::ID_UNCHANGED {
+                    inode.uid = uid;
+                }
+                if gid != Self::ID_UNCHANGED {
+                    inode.gid = gid;
+                }
+                inode
+            });
     }
 
     /// Record fake ownership for an inode (lock-free concurrent insert)
     #[inline]
-    pub fn set_inode_ownership(&mut self, key: InodeKey, ownership: FileOwnership) {
+    pub fn set_inode_ownership(&self, key: InodeKey, ownership: FileOwnership) {
         self.inode_map
             .entry(key)
             .and_modify(|inode| {

@@ -36,6 +36,8 @@ fn run_c_program_through_pseudoroot(
     let output = std::process::Command::new(c_executable)
         .env("PSEUDOROOT_UID", uid.to_string())
         .env("PSEUDOROOT_GID", gid.to_string())
+        // Socket IPC retains full per-inode metadata (xattrs, …) for hook tests.
+        .env(pseudoroot::SESSION_SHM_ENV, "0")
         .fakeroot()
         .output()
         .ok()?;

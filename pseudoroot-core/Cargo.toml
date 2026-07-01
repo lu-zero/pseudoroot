@@ -9,4 +9,5 @@ repository.workspace = true
 [dependencies]
 bincode.workspace = true
 dashmap.workspace = true
+libc.workspace = true
 serde.workspace = true

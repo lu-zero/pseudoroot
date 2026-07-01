@@ -6,6 +6,8 @@
 pub mod daemon_client;
 pub mod daemon_server;
 pub mod protocol;
+pub mod shm_client;
+pub mod shm_map;
 pub mod state;
 
 pub use state::{FakeInode, FakeRootState, FileOwnership, InodeKey, UidGidMap};
@@ -63,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_fake_root_state_set_current() {
-        let mut state = FakeRootState::new();
+        let state = FakeRootState::new();
         state.set_current(1234, 5678);
         assert_eq!(state.current_uid(), 1234);
         assert_eq!(state.current_gid(), 5678);
@@ -71,7 +73,7 @@ mod tests {
 
     #[test]
     fn test_fake_root_state_inode_ownership() {
-        let mut state = FakeRootState::new();
+        let state = FakeRootState::new();
         let ownership = FileOwnership::new(3000, 4000);
         let key = (1u64, 42u64);
         state.set_inode_ownership(key, ownership);
@@ -80,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_fake_root_state_inode_mode() {
-        let mut state = FakeRootState::new();
+        let state = FakeRootState::new();
         let key = (1u64, 42u64);
         let mut inode = FakeInode::new(0, 0);
         inode.mode = Some(0o4755);
@@ -89,6 +91,18 @@ mod tests {
     }
 
     #[test]
+    fn test_fake_root_state_upsert_chown() {
+        let state = FakeRootState::new();
+        state.upsert_chown((1, 2), 100, 200, 0, 0);
+        let ownership = state.get_inode_ownership((1, 2)).unwrap();
+        assert_eq!(ownership.uid, 100);
+        assert_eq!(ownership.gid, 200);
+        state.upsert_chown((1, 2), FakeRootState::ID_UNCHANGED, 7, 0, 0);
+        let ownership = state.get_inode_ownership((1, 2)).unwrap();
+        assert_eq!(ownership.uid, 100);
+        assert_eq!(ownership.gid, 7);
+    }
+
     fn test_fake_root_state_remove_inode_ownership() {
         let mut state = FakeRootState::new();
         let ownership = FileOwnership::new(3000, 4000);

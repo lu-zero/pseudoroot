@@ -4,8 +4,8 @@
 //! to a running daemon for persistent state management.
 
 use crate::protocol::{
-    InodeKeyPayload, InodeStatePayload, InodeStateResult, IpcPayload, MessageType, ProtocolMessage,
-    UidGidPayload,
+    ChownPayload, InodeKeyPayload, InodeStatePayload, InodeStateResult, IpcPayload, MessageType,
+    ProtocolMessage, UidGidPayload,
 };
 use crate::state::{FakeInode, InodeKey};
 use std::env;
@@ -152,6 +152,42 @@ pub fn daemon_get_inode(key: InodeKey) -> Option<FakeInode> {
             }
         }
         Err(_) => None,
+    }
+}
+
+/// Merge a chown into daemon state in one RPC.
+pub fn daemon_upsert_chown(
+    key: InodeKey,
+    uid: u32,
+    gid: u32,
+    default_uid: u32,
+    default_gid: u32,
+) -> bool {
+    let channel = match get_daemon_channel() {
+        Some(ch) => ch,
+        None => return false,
+    };
+    let mut channel_guard = match channel.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let payload = ChownPayload {
+        dev: key.0,
+        ino: key.1,
+        uid,
+        gid,
+        default_uid,
+        default_gid,
+    };
+    let message = ProtocolMessage::new(
+        MessageType::UpsertChown,
+        payload.to_payload(),
+        crate::protocol::next_request_id(),
+    );
+
+    match channel_guard.request(message) {
+        Ok(response) => response.message_type != MessageType::Error,
+        Err(_) => false,
     }
 }
 

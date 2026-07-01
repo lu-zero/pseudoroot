@@ -34,6 +34,8 @@ pub enum MessageType {
     RemoveOwnership,
     /// Initialize connection with UID/GID
     Init,
+    /// Merge uid/gid into an inode entry in one update
+    UpsertChown,
 }
 
 /// Request ID generator
@@ -245,6 +247,17 @@ pub struct InodeStateResult {
 pub struct UidGidPayload {
     pub uid: u32,
     pub gid: u32,
+}
+
+/// Chown merge payload (`uid`/`gid` of `u32::MAX` leave that field unchanged).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ChownPayload {
+    pub dev: u64,
+    pub ino: u64,
+    pub uid: u32,
+    pub gid: u32,
+    pub default_uid: u32,
+    pub default_gid: u32,
 }
 
 #[cfg(test)]

@@ -7,7 +7,11 @@ use crate::inode::{
 use pseudoroot_core::daemon_client::{
     daemon_get_current_uid_gid, daemon_get_inode, daemon_init, daemon_mode_active,
     daemon_mode_enabled, daemon_remove_inode, daemon_set_current_uid_gid, daemon_set_inode,
-    init_daemon_connection,
+    daemon_upsert_chown, init_daemon_connection,
+};
+use pseudoroot_core::shm_client::{
+    init_shm_from_env, shm_get_current_uid_gid, shm_get_inode, shm_mode_active,
+    shm_set_current_uid_gid, shm_upsert_chown, shm_upsert_inode,
 };
 use pseudoroot_core::state::{
     global_state_read, global_state_write, init_global_state, FakeInode, InodeKey,
@@ -45,7 +49,7 @@ pub fn store_bootstrap_ids(uid: u32, gid: u32) {
 
 fn ensure_library_init() {
     if LIBRARY_INIT_DONE.load(Ordering::Acquire) {
-        ensure_daemon_init();
+        ensure_session_backing_init();
         return;
     }
     if LIBRARY_INITIALIZING.load(Ordering::Acquire) {
@@ -58,15 +62,16 @@ fn ensure_library_init() {
         finish_library_init();
         LIBRARY_INITIALIZING.store(false, Ordering::Release);
     });
-    ensure_daemon_init();
+    ensure_session_backing_init();
 }
 
-fn ensure_daemon_init() {
-    if !daemon_mode_enabled() {
-        return;
-    }
-    static DAEMON_INIT: Once = Once::new();
-    DAEMON_INIT.call_once(|| {
+fn ensure_session_backing_init() {
+    static SESSION_INIT: Once = Once::new();
+    SESSION_INIT.call_once(|| {
+        let _ = init_shm_from_env();
+        if shm_mode_active() || !daemon_mode_enabled() {
+            return;
+        }
         let uid = BOOT_UID.load(Ordering::Relaxed);
         let gid = BOOT_GID.load(Ordering::Relaxed);
         let _ = init_daemon_connection();
@@ -80,7 +85,7 @@ pub fn finish_library_init() {
     let gid = BOOT_GID.load(Ordering::Relaxed);
 
     {
-        let mut state = init_global_state();
+        let state = init_global_state();
         state.set_current(uid, gid);
     }
 
@@ -92,7 +97,12 @@ pub(crate) fn current_fake_uid() -> u32 {
     if !LIBRARY_INIT_DONE.load(Ordering::Acquire) {
         return BOOT_UID.load(Ordering::Relaxed);
     }
-    ensure_daemon_init();
+    ensure_session_backing_init();
+    if shm_mode_active() {
+        if let Some((uid, _)) = shm_get_current_uid_gid() {
+            return uid;
+        }
+    }
     if daemon_mode_active() {
         if let Some((uid, _)) = daemon_get_current_uid_gid() {
             return uid;
@@ -106,7 +116,12 @@ pub(crate) fn current_fake_gid() -> u32 {
     if !LIBRARY_INIT_DONE.load(Ordering::Acquire) {
         return BOOT_GID.load(Ordering::Relaxed);
     }
-    ensure_daemon_init();
+    ensure_session_backing_init();
+    if shm_mode_active() {
+        if let Some((_, gid)) = shm_get_current_uid_gid() {
+            return gid;
+        }
+    }
     if daemon_mode_active() {
         if let Some((_, gid)) = daemon_get_current_uid_gid() {
             return gid;
@@ -120,16 +135,21 @@ pub(crate) fn set_current_ids(uid: u32, gid: u32) -> i32 {
     BOOT_UID.store(uid, Ordering::Relaxed);
     BOOT_GID.store(gid, Ordering::Relaxed);
     {
-        let mut state = global_state_write();
+        let state = global_state_write();
         state.set_current(uid, gid);
     }
-    if daemon_mode_enabled() {
+    if shm_mode_active() {
+        shm_set_current_uid_gid(uid, gid);
+    } else if daemon_mode_enabled() {
         let _ = daemon_set_current_uid_gid(uid, gid);
     }
     0
 }
 
 fn get_inode(key: InodeKey) -> Option<FakeInode> {
+    if shm_mode_active() {
+        return shm_get_inode(key);
+    }
     if daemon_mode_active() {
         if let Some(inode) = daemon_get_inode(key) {
             return Some(inode);
@@ -140,8 +160,12 @@ fn get_inode(key: InodeKey) -> Option<FakeInode> {
 }
 
 fn set_inode(key: InodeKey, inode: FakeInode) {
+    if shm_mode_active() {
+        shm_upsert_inode(key, &inode);
+        return;
+    }
     {
-        let mut state = global_state_write();
+        let state = global_state_write();
         state.set_inode(key, inode.clone());
     }
     if daemon_mode_enabled() {
@@ -161,7 +185,7 @@ where
 
 fn remove_inode(key: InodeKey) {
     {
-        let mut state = global_state_write();
+        let state = global_state_write();
         state.remove_inode(key);
     }
     if daemon_mode_enabled() {
@@ -171,21 +195,17 @@ fn remove_inode(key: InodeKey) {
 
 /// Record a chown against `key` in one map update (avoids get+set double lookup).
 fn record_chown_key(key: InodeKey, uid: u32, gid: u32) {
+    let fake_uid = current_fake_uid();
+    let fake_gid = current_fake_gid();
+    if shm_mode_active() {
+        shm_upsert_chown(key, uid, gid, fake_uid, fake_gid);
+        return;
+    }
     if daemon_mode_active() {
-        let mut inode = daemon_get_inode(key)
-            .unwrap_or_else(|| FakeInode::new(current_fake_uid(), current_fake_gid()));
-        if uid != ID_UNCHANGED {
-            inode.uid = uid;
-        }
-        if gid != ID_UNCHANGED {
-            inode.gid = gid;
-        }
-        let _ = daemon_set_inode(key, &inode);
+        let _ = daemon_upsert_chown(key, uid, gid, fake_uid, fake_gid);
         return;
     }
 
-    let fake_uid = current_fake_uid();
-    let fake_gid = current_fake_gid();
     let inode = {
         let state = global_state_write();
         let entry = state.inode_map.entry(key);
