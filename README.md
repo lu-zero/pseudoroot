@@ -68,7 +68,7 @@ Fake metadata is keyed by `(dev, ino)` inode identity — not paths — so renam
 
 | Mode | Scope | When to use |
 |------|-------|-------------|
-| **Session** (default) | In-process IPC server per `.fakeroot()` / `pdr` invocation; shared across `exec` within that session | Package builds (`make install` → `tar`), API usage |
+| **Session** (default) | Shared-memory inode map (Linux) or an in-process IPC server thread (other platforms, or `PSEUDOROOT_SESSION_SHM=0`) per `.fakeroot()` / `pdr` invocation; shared across `exec` within that session | Package builds (`make install` → `tar`), API usage |
 | **External daemon** (`--daemon` / `PSEUDOROOT_DAEMON_SOCKET`) | Shared across separate top-level invocations via Unix socket IPC | Long-lived `pdrd`, multiple sequential `pdr` calls |
 | **Standalone** (`PSEUDOROOT_STANDALONE=1`) | In-memory per process only; inherited across `fork()` | Single-process tools, debugging |
 
@@ -78,6 +78,7 @@ Environment variables:
 - `PSEUDOROOT_GID` — fake GID (default: 0)
 - `PSEUDOROOT_DAEMON_SOCKET` — attach to an existing `pdrd` (skips session auto-start)
 - `PSEUDOROOT_STANDALONE` — per-process state only (no session `pdrd`)
+- `PSEUDOROOT_SESSION_SHM` — set to `0`/`false` to use the in-process daemon thread instead of the shared-memory map for session mode (Linux only; ignored elsewhere)
 - `PSEUDOROOT_LIB` — override interposed library path
 
 
@@ -93,24 +94,32 @@ Nothing is written to disk for ownership: `chown` records fake uid/gid in the in
 | `pseudoroot` | CLI (`pseudoroot` / `pdr`) and API crate |
 | `pseudoroot-tests` | Integration, CLI, and interposition tests |
 
-**Platform support:** Linux is fully supported. macOS is supported for credential and stat interposition; Linux-only syscalls (`statx`, `capset`, `*xattr`, `mknod`) are gated accordingly.
+**Platform support:** Linux is fully supported (all syscall families below,
+default session mode backed by a shared-memory inode map). macOS builds and
+covers credentials, `stat`/`lstat`/`fstat`, `chown`/`lchown`/`fchown`,
+`chmod`/`fchmod`, and `unlink`/`rmdir`/`rename`; the `*at`-suffixed family
+(`fstatat`, `fchmodat`, `fchownat`, `unlinkat`, `renameat`, `renameat2`),
+`statx`, `mknod`/`mknodat`, and the `*xattr` family are currently Linux-only
+— see [`todo/macos.md`](todo/macos.md) for the plan to close that gap. CI
+only runs on Linux today, so macOS changes are type-checked (`cargo check
+--target x86_64-apple-darwin`) but not yet exercised on real hardware in CI.
 
 ### Interposed syscall families
 
-- **Credentials** — `getuid`, `setuid`, `setresuid`, `setfsuid`, `setgroups`, `capset`, …
-- **Stat** — `stat`, `lstat`, `fstat`, `fstatat`, `statx` (uid/gid/mode/rdev overlay)
-- **Ownership** — `chown`, `lchown`, `fchown`, `fchownat` (record only, skip real syscall)
-- **Mode** — `chmod`, `fchmod`, `fchmodat` (record fake mode, real syscall with EPERM zeroed)
-- **Inode lifecycle** — `unlink`, `rename`, … (drop stale inode entries)
-- **Creation** — `mknod`, `mknodat` (placeholder file + faked device metadata)
-- **xattr** — all 12 `*xattr` syscalls (fake `security.capability`, ACLs, etc.)
+- **Credentials** — `getuid`, `setuid`, `setresuid`, `setfsuid`, `setgroups`, … (Linux + macOS); `capset` (Linux only)
+- **Stat** — `stat`, `lstat`, `fstat` (Linux + macOS); `fstatat`, `statx` (Linux only; uid/gid/mode/rdev overlay)
+- **Ownership** — `chown`, `lchown`, `fchown` (Linux + macOS); `fchownat` (Linux only; record only, skip real syscall)
+- **Mode** — `chmod`, `fchmod` (Linux + macOS); `fchmodat` (Linux only; record fake mode, real syscall with EPERM zeroed)
+- **Inode lifecycle** — `unlink`, `rmdir`, `rename` (Linux + macOS); `unlinkat`, `renameat`, `renameat2` (Linux only; drop stale inode entries)
+- **Creation** — `mknod`, `mknodat` (Linux only; placeholder file + faked device metadata)
+- **xattr** — all 12 `*xattr` syscalls (Linux only; fake `security.capability`, ACLs, etc.)
 
 ## Build and test
 
 ```bash
 cargo build
 cargo test
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
@@ -118,17 +127,30 @@ The shared library is at `target/{debug,release}/libpseudoroot_lib.so` (Linux) o
 
 ## Performance
 
-Benchmark results (stat loop, standalone mode):
+`bench/run.sh`, `bench/run-install.sh`, and `bench/run-make.sh` (synced from
+the [fakeroost](https://github.com/lu-zero/fakeroost) sibling project, whose
+ptrace-based supervisor design pseudoroot's `LD_PRELOAD` approach avoids the
+serialization bottleneck of) compare pseudoroot against native, classic
+`fakeroot`, and `fakeroost` across a `stat()` sweep, a realistic
+build/install/tar packaging workload, and a parallel-compile workload. See
+[`bench/results/`](bench/results) for full output and system details; latest
+run (128-core aarch64, default SHM session mode):
 
 ```
-workers    rate_native/s  rate_pseudoroot/s
-   1         1471097          847049
-   8         5081757         2930461
+# bench/run.sh: stat() calls/sec, effective parallelism at 128 workers
+native      42.5M/s   (26.5x)
+pseudoroot   7.4M/s   ( 6.7x)
+fakeroost  251.5K/s   ( 2.5x)  -- single-supervisor ceiling (issue #7)
+fakeroot    44.5K/s   ( 0.7x)  -- gets slower under contention
 ```
 
-Daemon mode adds ~3–4% IPC overhead but shares state across processes.
+`bench/run-install.sh` (build → install with mixed root/installer ownership
++ `mknod` → `tar`) completed correctly at every job level from 1 to 128,
+with every `tar --numeric-owner` listing showing the right mixed ownership —
+the benchmark that actually exercises the session inode map's chown/mknod/
+removal paths under real concurrent load, not just a micro-benchmark.
 
-Compared to classic fakeroot (~97% overhead, poor threading), pseudoroot's library interposition with `DashMap` and atomic UID/GID achieves substantially lower overhead and better parallelism. See `bench/stat-loop` for the harness.
+See `bench/stat-loop` for the raw stat-loop harness.
 
 ## Comparison
 
@@ -138,7 +160,7 @@ Compared to classic fakeroot (~97% overhead, poor threading), pseudoroot's libra
 | Platforms | Linux, macOS | Linux | Linux |
 | xattr / setcap | Faked | Faked | Faked |
 | mknod unprivileged | Placeholder + fake metadata | Yes | Yes |
-| Multi-process state | Daemon (`pdrd`) | `faked` | N/A (single run) |
+| Multi-process state | SHM session or daemon (`pdrd`) | `faked` | N/A (single run) |
 | Rust API | `FakerootCommandExt` | C only | `FakerootCommandExt` |
 
 ## License
