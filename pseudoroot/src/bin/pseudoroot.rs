@@ -70,7 +70,7 @@ struct Cli {
     #[arg(long, default_value = "0")]
     gid: u32,
 
-    /// Use daemon mode for persistent state across multiple processes
+    /// Attach to an existing pdrd instead of starting a per-invocation session
     #[arg(long)]
     daemon: bool,
 
@@ -94,7 +94,7 @@ enum Commands {
         #[arg(allow_hyphen_values = true)]
         command: Vec<String>,
 
-        /// Use daemon mode for persistent state across multiple processes
+        /// Attach to an existing pdrd instead of starting a per-invocation session
         #[arg(long)]
         daemon: bool,
 

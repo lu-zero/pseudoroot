@@ -20,4 +20,6 @@ path = "src/bin/pseudoroot.rs"
 
 [dependencies]
 clap.workspace = true
+ctor.workspace = true
 pseudoroot-core.workspace = true
+tempfile.workspace = true

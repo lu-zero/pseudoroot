@@ -2,9 +2,7 @@
 
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output};
-use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::process::{Command, Output};
 
 /// Workspace root (`pseudoroot-tests` lives one level below it).
 fn workspace_root() -> PathBuf {
@@ -101,45 +99,6 @@ pub fn command_for_cli_run(bin: &Path) -> Command {
     cmd
 }
 
-struct TestDaemon {
-    _dir: tempfile::TempDir,
-    socket: PathBuf,
-    _child: Child,
-}
-
-fn shared_test_daemon() -> &'static Mutex<TestDaemon> {
-    static DAEMON: OnceLock<Mutex<TestDaemon>> = OnceLock::new();
-    DAEMON.get_or_init(|| {
-        let dir = tempfile::TempDir::new().expect("tempdir for test daemon");
-        let socket = dir.path().join("pseudoroot.sock");
-        let daemon_bin = find_pdrd_bin();
-        let mut child = Command::new(&daemon_bin)
-            .arg("-s")
-            .arg(&socket)
-            .spawn()
-            .expect("Failed to start pdrd for tests");
-
-        for _ in 0..100 {
-            if socket.exists() {
-                return Mutex::new(TestDaemon {
-                    _dir: dir,
-                    socket,
-                    _child: child,
-                });
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-        panic!("pdrd did not create socket at {}", socket.display());
-    })
-}
-
-/// Socket path for the shared per-test-suite daemon.
-pub fn test_daemon_socket() -> PathBuf {
-    shared_test_daemon().lock().unwrap().socket.clone()
-}
-
 /// Run a command through the API with the given UID and GID (fakeroost-compatible).
 pub fn run_pseudoroot_command(command: &[&str], uid: u32, gid: u32) -> Output {
     use pseudoroot::FakerootCommandExt;
@@ -176,16 +135,17 @@ pub fn cleanup_test_file(path: impl AsRef<Path>) {
 
 /// Run `sh -c <script>` under pseudoroot in `dir`.
 ///
-/// Uses a shared `pdrd` instance so inode state survives across separate
-/// `exec` calls (`touch`, `chown`, `stat`, …) within the script.
+/// Session supervision auto-starts a private `pdrd` for the script so inode state
+/// survives across separate `exec` calls (`touch`, `chown`, `stat`, …).
 pub fn run_pseudoroot_sh(dir: &Path, script: &str) -> Output {
     use pseudoroot::FakerootCommandExt;
 
     let lib = find_pseudoroot_lib();
-    let socket = test_daemon_socket();
+    let daemon = find_pdrd_bin();
     // SAFETY: test processes are separate; env is per-invocation.
     unsafe {
         std::env::set_var(pseudoroot::LIB_PATH_ENV, &lib);
+        std::env::set_var("PSEUDOROOT_DAEMON_BIN", &daemon);
     }
 
     pseudoroot::init();
@@ -195,7 +155,7 @@ pub fn run_pseudoroot_sh(dir: &Path, script: &str) -> Output {
         .current_dir(dir)
         .env("PSEUDOROOT_UID", "0")
         .env("PSEUDOROOT_GID", "0")
-        .env("PSEUDOROOT_DAEMON_SOCKET", &socket)
+        .env("PSEUDOROOT_DAEMON_BIN", daemon)
         .fakeroot()
         .output()
         .expect("Failed to run pseudoroot shell script")

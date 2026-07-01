@@ -30,7 +30,7 @@ Swap backends by changing the import only:
 use pseudoroot::FakerootCommandExt;
 
 fn main() {
-    pseudoroot::init(); // no-op here; required for fakeroost portability
+    pseudoroot::init(); // required: handles session re-exec (no-op otherwise)
     std::process::Command::new("make")
         .arg("install")
         .env("PSEUDOROOT_UID", "0")
@@ -49,7 +49,7 @@ Set `PSEUDOROOT_LIB` to override library discovery (tests, custom installs).
 |--------|-------------|---------|
 | `--uid <UID>` | Fake UID | 0 |
 | `--gid <GID>` | Fake GID | 0 |
-| `--daemon` | Use `pdrd` for persistent cross-process state | off |
+| `--daemon` | Attach to an existing `pdrd` instead of a per-invocation session | off |
 | `--socket-path <PATH>` | Daemon socket path | `/tmp/pseudoroot.sock` |
 | `start` / `stop` / `status` | Manage the daemon | — |
 | `print-library-path` | Print the interposed library path | — |
@@ -68,15 +68,18 @@ Fake metadata is keyed by `(dev, ino)` inode identity — not paths — so renam
 
 | Mode | Scope | When to use |
 |------|-------|-------------|
-| **Standalone** (default) | In-memory per process tree; inherited across `fork()` | Single `pdr`/`pseudoroot` invocation, package builds |
-| **Daemon** (`--daemon` / `PSEUDOROOT_DAEMON_SOCKET`) | Shared across separate invocations via Unix socket IPC | Multiple sequential commands that must share fake ownership |
+| **Session** (default) | Auto-starts a private `pdrd` per `.fakeroot()` / `pdr` invocation; shared across `exec` within that session | Package builds (`make install` → `tar`), API usage |
+| **External daemon** (`--daemon` / `PSEUDOROOT_DAEMON_SOCKET`) | Shared across separate top-level invocations via Unix socket IPC | Long-lived `pdrd`, multiple sequential `pdr` calls |
+| **Standalone** (`PSEUDOROOT_STANDALONE=1`) | In-memory per process only; inherited across `fork()` | Single-process tools, debugging |
 
 Environment variables:
 
 - `PSEUDOROOT_UID` — fake UID (default: 0)
 - `PSEUDOROOT_GID` — fake GID (default: 0)
-- `PSEUDOROOT_DAEMON_SOCKET` — enable daemon mode (socket path)
+- `PSEUDOROOT_DAEMON_SOCKET` — attach to an existing `pdrd` (skips session auto-start)
+- `PSEUDOROOT_STANDALONE` — per-process state only (no session `pdrd`)
 - `PSEUDOROOT_LIB` — override interposed library path
+- `PSEUDOROOT_DAEMON_BIN` — override `pdrd` discovery for session mode
 
 Nothing is written to disk for ownership: `chown` records fake uid/gid in the inode table; `stat`/`statx` overlay the result. The real filesystem uid/gid is unchanged.
 

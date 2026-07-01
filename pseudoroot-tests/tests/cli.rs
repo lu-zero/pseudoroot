@@ -48,6 +48,26 @@ fn partial_chown_keeps_fake_current_id() {
 }
 
 #[test]
+fn install_and_tar_share_map_in_one_session() {
+    let dir = TempDir::new().unwrap();
+    let out = pseudoroot_sh(
+        dir.path(),
+        "touch src; install -m 644 -o 200 -g 200 src lib-installed; \
+         install -m 755 -o 0 -g 0 /bin/true bin-installed; \
+         tar --numeric-owner -cf out.tar lib-installed bin-installed; \
+         tar --numeric-owner -tvf out.tar",
+    );
+    assert!(
+        out.contains("0/0"),
+        "root-owned bin missing from tar: {out}"
+    );
+    assert!(
+        out.contains("200/200"),
+        "installer-owned lib missing from tar: {out}"
+    );
+}
+
+#[test]
 fn tar_records_mixed_fake_ownership() {
     let dir = TempDir::new().unwrap();
     let out = pseudoroot_sh(
