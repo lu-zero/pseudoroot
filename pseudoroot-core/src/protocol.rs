@@ -36,6 +36,8 @@ pub enum MessageType {
     Init,
     /// Merge uid/gid into an inode entry in one update
     UpsertChown,
+    /// Ask a standalone daemon to shut itself down
+    Shutdown,
 }
 
 /// Request ID generator

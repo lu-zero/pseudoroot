@@ -23,7 +23,6 @@ pub struct SessionDaemon {
     socket_path: PathBuf,
     shutdown: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
-    #[allow(dead_code)]
     state: SharedDaemonState,
 }
 
@@ -102,11 +101,15 @@ pub fn run_blocking(
         eprintln!("Warning: Failed to set socket permissions: {err}");
     }
 
+    listener.set_nonblocking(true)?;
     let state = new_shared_state(uid, gid);
     let shutdown = Arc::new(AtomicBool::new(false));
     let result = accept_loop(listener, state, Arc::clone(&shutdown), verbose);
 
-    if cleanup {
+    // A graceful (message-triggered) shutdown always cleans up its own
+    // socket; `--cleanup` covers exits (e.g. an accept() error) that
+    // otherwise wouldn't.
+    if cleanup || result.is_ok() {
         remove_socket(&socket_path);
     }
     result
@@ -133,7 +136,8 @@ fn accept_loop(
         match listener.accept() {
             Ok((stream, _)) => {
                 let state_clone = Arc::clone(&state);
-                thread::spawn(move || handle_client(stream, state_clone, verbose));
+                let shutdown_clone = Arc::clone(&shutdown);
+                thread::spawn(move || handle_client(stream, state_clone, shutdown_clone, verbose));
             }
             Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(10));
@@ -144,7 +148,12 @@ fn accept_loop(
     Ok(())
 }
 
-fn handle_client(mut stream: UnixStream, state: SharedDaemonState, verbose: bool) {
+fn handle_client(
+    mut stream: UnixStream,
+    state: SharedDaemonState,
+    shutdown: Arc<AtomicBool>,
+    verbose: bool,
+) {
     if verbose {
         eprintln!("Daemon: New client connection");
     }
@@ -184,7 +193,7 @@ fn handle_client(mut stream: UnixStream, state: SharedDaemonState, verbose: bool
             );
         }
 
-        let response = dispatch_message(&message, &state);
+        let response = dispatch_message(&message, &state, &shutdown);
         if let Err(err) = send_message(&mut stream, &response) {
             if verbose {
                 eprintln!("Daemon: Failed to send response: {err}");
@@ -198,7 +207,11 @@ fn handle_client(mut stream: UnixStream, state: SharedDaemonState, verbose: bool
     }
 }
 
-fn dispatch_message(message: &ProtocolMessage, state: &SharedDaemonState) -> ProtocolMessage {
+fn dispatch_message(
+    message: &ProtocolMessage,
+    state: &SharedDaemonState,
+    shutdown: &Arc<AtomicBool>,
+) -> ProtocolMessage {
     match message.message_type {
         MessageType::Ping => ProtocolMessage::response(message.request_id, b"pong".to_vec()),
         MessageType::GetCurrentUidGid => {
@@ -288,6 +301,10 @@ fn dispatch_message(message: &ProtocolMessage, state: &SharedDaemonState) -> Pro
             } else {
                 ProtocolMessage::error(message.request_id, "Invalid UidGidPayload")
             }
+        }
+        MessageType::Shutdown => {
+            shutdown.store(true, Ordering::Release);
+            ProtocolMessage::response(message.request_id, vec![])
         }
         MessageType::Response | MessageType::Error => {
             ProtocolMessage::error(message.request_id, "Unexpected message type")

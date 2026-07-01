@@ -5,7 +5,9 @@
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use pseudoroot::FakerootCommandExt;
-use pseudoroot_core::protocol::DEFAULT_SOCKET_PATH;
+use pseudoroot_core::protocol::{
+    next_request_id, IpcChannel, MessageType, ProtocolMessage, DEFAULT_SOCKET_PATH,
+};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -331,15 +333,26 @@ fn start_daemon(
 }
 
 fn stop_daemon(socket_path: Option<String>) -> ! {
-    let socket_path = PathBuf::from(socket_path.unwrap_or_else(|| DEFAULT_SOCKET_PATH.to_string()));
+    let socket_path = socket_path.unwrap_or_else(|| DEFAULT_SOCKET_PATH.to_string());
+    let mut channel = IpcChannel::new(socket_path.clone());
 
-    match fs::remove_file(&socket_path) {
+    if channel.connect().is_err() {
+        // Nothing is listening; at most a stale socket file is left behind.
+        match fs::remove_file(&socket_path) {
+            Ok(_) => println!("No daemon running; removed stale socket file: {socket_path}"),
+            Err(_) => println!("Daemon is not running"),
+        }
+        process::exit(0);
+    }
+
+    let request = ProtocolMessage::new(MessageType::Shutdown, vec![], next_request_id());
+    match channel.request(request) {
         Ok(_) => {
-            println!("Daemon socket removed: {}", socket_path.display());
+            println!("Daemon stopped: {socket_path}");
             process::exit(0);
         }
         Err(e) => {
-            eprintln!("Error: Failed to stop daemon: {}", e);
+            eprintln!("Error: Failed to stop daemon: {e}");
             process::exit(1);
         }
     }
