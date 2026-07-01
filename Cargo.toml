@@ -12,6 +12,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.92"
 license = "MIT"
 authors = ["Luca Barbato <lu_zero@gentoo.org>"]
 repository = "https://github.com/lu-zero/pseudoroot"

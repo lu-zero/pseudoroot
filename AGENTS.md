@@ -10,7 +10,11 @@ cargo fmt --check                  # Format check — must pass
 
 # MSRV verification (use cargo-msrv)
 cargo install cargo-msrv
-cargo msrv verify                  # Verifies the rust-version declared in Cargo.toml
+# cargo-msrv doesn't resolve `[workspace.package].rust-version` from a virtual
+# manifest, so verify per member instead of from the repo root:
+for crate in pseudoroot-core pseudoroot-lib pseudoroot-daemon pseudoroot pseudoroot-tests; do
+    cargo msrv verify --manifest-path "$crate/Cargo.toml"
+done
 ```
 
 ## Architecture
