@@ -9,11 +9,23 @@ use std::path::PathBuf;
 /// Sentinel meaning "leave this id unchanged" in chown(2).
 pub const ID_UNCHANGED: u32 = u32::MAX;
 
+/// `AT_EMPTY_PATH` doesn't exist on Darwin (no `/proc/self/fd` idiom to pair
+/// it with); treat it as a no-op bit there instead of the real flag.
+#[cfg(target_os = "linux")]
+const AT_EMPTY_PATH: i32 = libc::AT_EMPTY_PATH;
+#[cfg(not(target_os = "linux"))]
+const AT_EMPTY_PATH: i32 = 0;
+
 /// Build an inode key from a `stat` buffer.
+///
+/// `st_dev` is already `u64` on Linux (the cast is a no-op there) but `i32`
+/// on Darwin, so the cast is load-bearing on macOS even though clippy can
+/// only see the Linux build.
 #[inline]
 #[must_use]
+#[allow(clippy::unnecessary_cast)]
 pub fn key_from_stat(st: &libc::stat) -> InodeKey {
-    (st.st_dev, st.st_ino)
+    (st.st_dev as u64, st.st_ino)
 }
 
 /// `fstatat` wrapper returning the stat buffer or errno.
@@ -64,7 +76,7 @@ pub fn chown_stat_flags(at_flags: i32) -> i32 {
 #[inline]
 #[must_use]
 pub fn at_empty_path(at_flags: i32) -> bool {
-    at_flags & libc::AT_EMPTY_PATH != 0
+    at_flags & AT_EMPTY_PATH != 0
 }
 
 /// Resolve a `(dirfd, path)` pair to an absolute filesystem path.
@@ -104,7 +116,7 @@ pub fn stat_path_buf(path: &std::path::Path) -> Result<libc::stat, i32> {
 pub fn resolve_stat_flags(dirfd: i32, path: *const c_char, at_flags: i32) -> i32 {
     let mut flags = chown_stat_flags(at_flags);
     if at_empty_path(at_flags) {
-        flags |= libc::AT_EMPTY_PATH;
+        flags |= AT_EMPTY_PATH;
         return flags;
     }
     if path.is_null() {
@@ -112,7 +124,7 @@ pub fn resolve_stat_flags(dirfd: i32, path: *const c_char, at_flags: i32) -> i32
     }
     let empty = unsafe { CStr::from_ptr(path) }.to_bytes().is_empty();
     if empty && dirfd != libc::AT_FDCWD {
-        flags |= libc::AT_EMPTY_PATH;
+        flags |= AT_EMPTY_PATH;
     }
     flags
 }

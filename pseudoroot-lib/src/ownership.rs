@@ -256,8 +256,11 @@ fn zero_on_err(result: i32) -> i32 {
     }
 }
 
-fn record_chmod_for_key(key: InodeKey, real_mode: u32, req_mode: u32) {
-    let mode = compose_mode(real_mode, req_mode);
+// libc::mode_t is already u32 on Linux (the casts below are no-ops there) but
+// u16 on Darwin, where the widening cast is load-bearing.
+#[allow(clippy::unnecessary_cast)]
+fn record_chmod_for_key(key: InodeKey, real_mode: libc::mode_t, req_mode: libc::mode_t) {
+    let mode = compose_mode(real_mode as u32, req_mode as u32);
     update_inode(key, |inode| {
         inode.mode = Some(mode);
     });
@@ -425,6 +428,9 @@ pub(crate) fn setfsgid(gid: u32) -> u32 {
     previous
 }
 
+// libc::mode_t/dev_t are already u32/u64 on Linux (no-op casts there) but
+// u16/i32 on Darwin, where the widening casts are load-bearing.
+#[allow(clippy::unnecessary_cast)]
 fn finish_fake_mknod(resolved: &Path, mode: libc::mode_t, dev: libc::dev_t) -> i32 {
     use std::os::unix::fs::OpenOptionsExt;
     if std::fs::OpenOptions::new()
@@ -441,10 +447,10 @@ fn finish_fake_mknod(resolved: &Path, mode: libc::mode_t, dev: libc::dev_t) -> i
         Ok(st) => {
             let key = key_from_stat(&st);
             let mut inode = FakeInode::new(current_fake_uid(), current_fake_gid());
-            inode.mode = Some(mode);
+            inode.mode = Some(mode as u32);
             let kind = mode & libc::S_IFMT;
             if kind == libc::S_IFCHR || kind == libc::S_IFBLK {
-                inode.rdev = Some(dev);
+                inode.rdev = Some(dev as u64);
             }
             set_inode(key, inode);
             0
