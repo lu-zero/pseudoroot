@@ -5,3 +5,5 @@ Cargo.lock
 .DS_Store
 # Machine-specific local dep overrides
 **/.cargo/config.toml
+# Agent split-commit scratch trees
+.split-work/

@@ -172,8 +172,8 @@ fn remove_inode(key: InodeKey) {
 /// Record a chown against `key` in one map update (avoids get+set double lookup).
 fn record_chown_key(key: InodeKey, uid: u32, gid: u32) {
     if daemon_mode_active() {
-        let mut inode =
-            daemon_get_inode(key).unwrap_or_else(|| FakeInode::new(current_fake_uid(), current_fake_gid()));
+        let mut inode = daemon_get_inode(key)
+            .unwrap_or_else(|| FakeInode::new(current_fake_uid(), current_fake_gid()));
         if uid != ID_UNCHANGED {
             inode.uid = uid;
         }
