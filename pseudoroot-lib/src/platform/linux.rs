@@ -7,23 +7,17 @@ use crate::ownership;
 use std::os::raw::c_char;
 use std::sync::{Once, OnceLock};
 
-// Type aliases for function pointers
-type StatFn = unsafe extern "C" fn(*const c_char, *mut libc::stat) -> i32;
-type FstatFn = unsafe extern "C" fn(i32, *mut libc::stat) -> i32;
-type LstatFn = unsafe extern "C" fn(*const c_char, *mut libc::stat) -> i32;
+// Type aliases for function pointers.
+//
+// Note: stat/fstat/lstat/chown/chmod/lchown/fchown/fstatat/fchownat/fchmod/
+// fchmodat always go straight to a raw syscall below (dlsym(RTLD_NEXT) can
+// resolve back into our own hooks for these), so they have no REAL_* static
+// or dlsym lookup — unlike the rest of this file's functions, which fall
+// back to a dlsym'd function pointer.
 type GetuidFn = unsafe extern "C" fn() -> u32;
 type GeteuidFn = unsafe extern "C" fn() -> u32;
 type GetgidFn = unsafe extern "C" fn() -> u32;
 type GetegidFn = unsafe extern "C" fn() -> u32;
-type ChownFn = unsafe extern "C" fn(*const c_char, u32, u32) -> i32;
-type ChmodFn = unsafe extern "C" fn(*const c_char, libc::mode_t) -> i32;
-type LchownFn = unsafe extern "C" fn(*const c_char, u32, u32) -> i32;
-type FchownFn = unsafe extern "C" fn(i32, u32, u32) -> i32;
-type FstatatFn = unsafe extern "C" fn(i32, *const c_char, *mut libc::stat, i32) -> i32;
-
-type FchownatFn = unsafe extern "C" fn(i32, *const c_char, u32, u32, i32) -> i32;
-type FchmodFn = unsafe extern "C" fn(i32, libc::mode_t) -> i32;
-type FchmodatFn = unsafe extern "C" fn(i32, *const c_char, libc::mode_t, i32) -> i32;
 type GetresuidFn = unsafe extern "C" fn(*mut u32, *mut u32, *mut u32) -> i32;
 type GetresgidFn = unsafe extern "C" fn(*mut u32, *mut u32, *mut u32) -> i32;
 type SetuidFn = unsafe extern "C" fn(u32) -> i32;
@@ -76,22 +70,10 @@ type LremovexattrFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
 type FremovexattrFn = unsafe extern "C" fn(i32, *const c_char) -> i32;
 
 // Use OnceLock for thread-safe lazy initialization
-static REAL_STAT: OnceLock<StatFn> = OnceLock::new();
-static REAL_FSTAT: OnceLock<FstatFn> = OnceLock::new();
-static REAL_LSTAT: OnceLock<LstatFn> = OnceLock::new();
 static REAL_GETUID: OnceLock<GetuidFn> = OnceLock::new();
 static REAL_GETEUID: OnceLock<GeteuidFn> = OnceLock::new();
 static REAL_GETGID: OnceLock<GetgidFn> = OnceLock::new();
 static REAL_GETEGID: OnceLock<GetegidFn> = OnceLock::new();
-static REAL_CHOWN: OnceLock<ChownFn> = OnceLock::new();
-static REAL_CHMOD: OnceLock<ChmodFn> = OnceLock::new();
-static REAL_LCHOWN: OnceLock<LchownFn> = OnceLock::new();
-static REAL_FCHOWN: OnceLock<FchownFn> = OnceLock::new();
-static REAL_FSTATAT: OnceLock<FstatatFn> = OnceLock::new();
-
-static REAL_FCHOWNAT: OnceLock<FchownatFn> = OnceLock::new();
-static REAL_FCHMOD: OnceLock<FchmodFn> = OnceLock::new();
-static REAL_FCHMODAT: OnceLock<FchmodatFn> = OnceLock::new();
 static REAL_GETRESUID: OnceLock<GetresuidFn> = OnceLock::new();
 static REAL_GETRESGID: OnceLock<GetresgidFn> = OnceLock::new();
 static REAL_SETUID: OnceLock<SetuidFn> = OnceLock::new();
@@ -139,13 +121,6 @@ fn ensure_real_funcs() {
 
 /// Initialize the function pointers by looking up the real functions
 unsafe fn init_real_funcs() {
-    REAL_STAT.set(get_next_function::<StatFn>(b"stat\0")).ok();
-    REAL_FSTAT
-        .set(get_next_function::<FstatFn>(b"fstat\0"))
-        .ok();
-    REAL_LSTAT
-        .set(get_next_function::<LstatFn>(b"lstat\0"))
-        .ok();
     REAL_GETUID
         .set(get_next_function::<GetuidFn>(b"getuid\0"))
         .ok();
@@ -157,31 +132,6 @@ unsafe fn init_real_funcs() {
         .ok();
     REAL_GETEGID
         .set(get_next_function::<GetegidFn>(b"getegid\0"))
-        .ok();
-    REAL_CHOWN
-        .set(get_next_function::<ChownFn>(b"chown\0"))
-        .ok();
-    REAL_CHMOD
-        .set(get_next_function::<ChmodFn>(b"chmod\0"))
-        .ok();
-    REAL_LCHOWN
-        .set(get_next_function::<LchownFn>(b"lchown\0"))
-        .ok();
-    REAL_FCHOWN
-        .set(get_next_function::<FchownFn>(b"fchown\0"))
-        .ok();
-    REAL_FSTATAT
-        .set(get_next_function::<FstatatFn>(b"fstatat\0"))
-        .ok();
-
-    REAL_FCHOWNAT
-        .set(get_next_function::<FchownatFn>(b"fchownat\0"))
-        .ok();
-    REAL_FCHMOD
-        .set(get_next_function::<FchmodFn>(b"fchmod\0"))
-        .ok();
-    REAL_FCHMODAT
-        .set(get_next_function::<FchmodatFn>(b"fchmodat\0"))
         .ok();
     REAL_GETRESUID
         .set(get_next_function::<GetresuidFn>(b"getresuid\0"))
