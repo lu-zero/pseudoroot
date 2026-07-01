@@ -275,9 +275,22 @@ pub fn daemon_init(uid: u32, gid: u32) -> bool {
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
+
+    /// `DAEMON_SOCKET_ENV` is process-wide state; serialize the tests that
+    /// touch it so they don't race each other under the default parallel
+    /// test runner (each test still restores whatever value it found).
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn test_daemon_mode_enabled_no_env() {
+        let _guard = lock_env();
         let old_var = env::var(DAEMON_SOCKET_ENV);
         env::remove_var(DAEMON_SOCKET_ENV);
         assert!(!daemon_mode_enabled());
@@ -288,6 +301,7 @@ mod tests {
 
     #[test]
     fn test_daemon_mode_enabled_with_env() {
+        let _guard = lock_env();
         let old_var = env::var(DAEMON_SOCKET_ENV);
         env::set_var(DAEMON_SOCKET_ENV, "/tmp/test.sock");
         assert!(daemon_mode_enabled());
@@ -300,6 +314,7 @@ mod tests {
 
     #[test]
     fn test_get_daemon_socket_path() {
+        let _guard = lock_env();
         let old_var = env::var(DAEMON_SOCKET_ENV);
         env::remove_var(DAEMON_SOCKET_ENV);
         assert_eq!(get_daemon_socket_path(), None);
