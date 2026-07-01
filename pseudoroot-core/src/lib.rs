@@ -103,8 +103,9 @@ mod tests {
         assert_eq!(ownership.gid, 7);
     }
 
+    #[test]
     fn test_fake_root_state_remove_inode_ownership() {
-        let mut state = FakeRootState::new();
+        let state = FakeRootState::new();
         let ownership = FileOwnership::new(3000, 4000);
         let key = (1u64, 42u64);
         state.set_inode_ownership(key, ownership);

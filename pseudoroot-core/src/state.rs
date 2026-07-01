@@ -266,7 +266,7 @@ impl FakeRootState {
 
     /// Drop the fake ownership entry for an inode
     #[inline]
-    pub fn remove_inode_ownership(&mut self, key: InodeKey) -> Option<FileOwnership> {
+    pub fn remove_inode_ownership(&self, key: InodeKey) -> Option<FileOwnership> {
         self.remove_inode(key).map(|inode| inode.ownership())
     }
 }
