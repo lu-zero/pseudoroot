@@ -135,8 +135,10 @@ pub fn cleanup_test_file(path: impl AsRef<Path>) {
 
 /// Run `sh -c <script>` under pseudoroot in `dir`.
 ///
-/// Session supervision auto-starts a private `pdrd` for the script so inode state
-/// survives across separate `exec` calls (`touch`, `chown`, `stat`, …).
+/// Session supervision starts a private in-process session (SHM-backed map,
+/// or an in-process daemon thread if SHM is unavailable) for the script so
+/// inode state survives across separate `exec` calls (`touch`, `chown`,
+/// `stat`, …) without needing a separate `pdrd` process.
 pub fn run_pseudoroot_sh(dir: &Path, script: &str) -> Output {
     use pseudoroot::FakerootCommandExt;
 
