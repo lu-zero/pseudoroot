@@ -5,7 +5,7 @@
 ```bash
 cargo build                        # Build all crates
 cargo test                         # Run all tests
-cargo clippy -- -D warnings        # Lint — must be warning-free
+cargo clippy --all-targets -- -D warnings  # Lint — must be warning-free (includes tests)
 cargo fmt --check                  # Format check — must pass
 
 # MSRV verification (use cargo-msrv)

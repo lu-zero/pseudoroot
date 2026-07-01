@@ -22,7 +22,7 @@ fn test_pseudoroot_binary_runs() {
 
     assert!(output.status.success(), "pseudoroot --help should succeed");
     assert!(
-        output.stdout.len() > 0,
+        !output.stdout.is_empty(),
         "pseudoroot --help should output something"
     );
 }
@@ -81,7 +81,7 @@ fn test_environment_variables() {
     );
 
     let stdout = str::from_utf8(&output.stdout).unwrap_or("");
-    let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+    let parts: Vec<&str> = stdout.split_whitespace().collect();
 
     assert_eq!(parts.len(), 2, "Should have both UID and GID");
     assert_eq!(parts[0], "999", "Expected PSEUDOROOT_UID=999");
@@ -119,7 +119,7 @@ fn test_custom_uid_gid_in_command() {
     assert!(output.status.success());
 
     let stdout = str::from_utf8(&output.stdout).unwrap_or("");
-    let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+    let parts: Vec<&str> = stdout.split_whitespace().collect();
 
     assert_eq!(parts.len(), 2);
     assert_eq!(parts[0], "1234");
@@ -214,5 +214,5 @@ fn test_chained_commands() {
         .filter(|s| !s.is_empty())
         .collect();
 
-    assert!(lines.len() >= 1, "Should have at least one line of output");
+    assert!(!lines.is_empty(), "Should have at least one line of output");
 }
