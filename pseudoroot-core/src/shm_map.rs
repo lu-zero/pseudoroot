@@ -2,8 +2,14 @@
 //!
 //! A memfd-backed table is created by the session supervisor and inherited by
 //! preloaded children via `PSEUDOROOT_SHM_FD`, avoiding per-stat Unix socket RPC.
+//!
+//! Layout: `Header | Slot[slot_count] | XattrPage[slot_count]`. Each slot has a
+//! dedicated [`XATTR_PAGE_SIZE`]-byte page (indexed the same way as its `Slot`)
+//! holding a bincode-serialized `xattrs` map; entries that don't fit are dropped
+//! (with a warning) rather than corrupting the table.
 
 use crate::state::{FakeInode, InodeKey};
+use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -15,8 +21,21 @@ pub const SHM_FD_ENV: &str = "PSEUDOROOT_SHM_FD";
 pub const SHM_LEN_ENV: &str = "PSEUDOROOT_SHM_LEN";
 
 const SHM_MAGIC: u32 = 0x5044_5253; // "PDRS"
-const SHM_VERSION: u32 = 2;
+const SHM_VERSION: u32 = 3;
 const ID_UNCHANGED: u32 = u32::MAX;
+
+/// Per-slot inline storage for a bincode-serialized xattr map.
+const XATTR_PAGE_SIZE: usize = 4096;
+
+/// Slot has never been used.
+const SLOT_EMPTY: u32 = 0;
+/// Slot holds a live entry.
+const SLOT_LIVE: u32 = 1;
+/// Slot held an entry that was removed; skip over it when probing but treat it
+/// as free for insertion. Needed because linear probing takes an empty slot as
+/// its search terminator — clearing a removed slot straight to `SLOT_EMPTY`
+/// would hide any later entry that hashed into the same bucket.
+const SLOT_TOMBSTONE: u32 = 2;
 
 #[repr(C, align(64))]
 struct Header {
@@ -63,7 +82,13 @@ impl ShmInodeMap {
         let slots_size = std::mem::size_of::<Slot>()
             .checked_mul(slot_count as usize)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "slot table too large"))?;
-        let len = header_size + slots_size;
+        let xattr_region_size = XATTR_PAGE_SIZE
+            .checked_mul(slot_count as usize)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "xattr region too large"))?;
+        let len = header_size
+            .checked_add(slots_size)
+            .and_then(|v| v.checked_add(xattr_region_size))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "shm map too large"))?;
 
         let fd = unsafe { libc::memfd_create(c"pseudoroot".as_ptr().cast(), 0) };
         if fd < 0 {
@@ -220,18 +245,20 @@ impl ShmInodeMap {
         let mut idx = self.hash(dev, ino);
         for _ in 0..self.slot_count {
             let slot = self.slot(idx);
-            if slot.occupied.load(Ordering::Acquire) == 0 {
-                return None;
-            }
-            if slot.dev == dev && slot.ino == ino {
-                let mut inode = FakeInode::new(slot.uid, slot.gid);
-                if slot.mode != 0 {
-                    inode.mode = Some(slot.mode);
+            match slot.occupied.load(Ordering::Acquire) {
+                SLOT_EMPTY => return None,
+                SLOT_LIVE if slot.dev == dev && slot.ino == ino => {
+                    let mut inode = FakeInode::new(slot.uid, slot.gid);
+                    if slot.mode != 0 {
+                        inode.mode = Some(slot.mode);
+                    }
+                    if slot.rdev != 0 {
+                        inode.rdev = Some(slot.rdev);
+                    }
+                    inode.xattrs = self.read_xattrs(idx);
+                    return Some(inode);
                 }
-                if slot.rdev != 0 {
-                    inode.rdev = Some(slot.rdev);
-                }
-                return Some(inode);
+                _ => {}
             }
             idx = (idx + 1) % self.slot_count;
         }
@@ -248,10 +275,12 @@ impl ShmInodeMap {
     ) {
         let (dev, ino) = key;
         let mut idx = self.hash(dev, ino);
+        let mut reuse: Option<u32> = None;
         for _ in 0..self.slot_count {
             let slot = self.slot(idx);
             match slot.occupied.load(Ordering::Acquire) {
-                0 => {
+                SLOT_EMPTY => {
+                    let target_idx = reuse.unwrap_or(idx);
                     let new_uid = if uid == ID_UNCHANGED {
                         default_uid
                     } else {
@@ -262,16 +291,20 @@ impl ShmInodeMap {
                     } else {
                         gid
                     };
-                    slot.dev = dev;
-                    slot.ino = ino;
-                    slot.uid = new_uid;
-                    slot.gid = new_gid;
-                    slot.mode = 0;
-                    slot.rdev = 0;
-                    slot.occupied.store(1, Ordering::Release);
+                    // Clear any xattrs left behind by whatever previously
+                    // occupied this slot before publishing it as live.
+                    self.write_xattrs(target_idx, &HashMap::new());
+                    let target = self.slot(target_idx);
+                    target.dev = dev;
+                    target.ino = ino;
+                    target.uid = new_uid;
+                    target.gid = new_gid;
+                    target.mode = 0;
+                    target.rdev = 0;
+                    target.occupied.store(SLOT_LIVE, Ordering::Release);
                     return;
                 }
-                _ if slot.dev == dev && slot.ino == ino => {
+                SLOT_LIVE if slot.dev == dev && slot.ino == ino => {
                     if uid != ID_UNCHANGED {
                         slot.uid = uid;
                     }
@@ -280,10 +313,12 @@ impl ShmInodeMap {
                     }
                     return;
                 }
-                _ => {
-                    idx = (idx + 1) % self.slot_count;
+                SLOT_TOMBSTONE if reuse.is_none() => {
+                    reuse = Some(idx);
                 }
+                _ => {}
             }
+            idx = (idx + 1) % self.slot_count;
         }
     }
 
@@ -291,31 +326,108 @@ impl ShmInodeMap {
     pub fn upsert_inode(&self, key: InodeKey, inode: &FakeInode) {
         let (dev, ino) = key;
         let mut idx = self.hash(dev, ino);
+        let mut reuse: Option<u32> = None;
         for _ in 0..self.slot_count {
             let slot = self.slot(idx);
             match slot.occupied.load(Ordering::Acquire) {
-                0 => {
-                    slot.dev = dev;
-                    slot.ino = ino;
+                SLOT_EMPTY => {
+                    let target_idx = reuse.unwrap_or(idx);
+                    self.write_xattrs(target_idx, &inode.xattrs);
+                    let target = self.slot(target_idx);
+                    target.dev = dev;
+                    target.ino = ino;
+                    target.uid = inode.uid;
+                    target.gid = inode.gid;
+                    target.mode = inode.mode.unwrap_or(0);
+                    target.rdev = inode.rdev.unwrap_or(0);
+                    target.occupied.store(SLOT_LIVE, Ordering::Release);
+                    return;
+                }
+                SLOT_LIVE if slot.dev == dev && slot.ino == ino => {
                     slot.uid = inode.uid;
                     slot.gid = inode.gid;
                     slot.mode = inode.mode.unwrap_or(0);
                     slot.rdev = inode.rdev.unwrap_or(0);
-                    slot.occupied.store(1, Ordering::Release);
+                    self.write_xattrs(idx, &inode.xattrs);
                     return;
                 }
-                _ if slot.dev == dev && slot.ino == ino => {
-                    slot.uid = inode.uid;
-                    slot.gid = inode.gid;
-                    slot.mode = inode.mode.unwrap_or(0);
-                    slot.rdev = inode.rdev.unwrap_or(0);
-                    return;
+                SLOT_TOMBSTONE if reuse.is_none() => {
+                    reuse = Some(idx);
                 }
-                _ => {
-                    idx = (idx + 1) % self.slot_count;
+                _ => {}
+            }
+            idx = (idx + 1) % self.slot_count;
+        }
+    }
+
+    /// Tombstone the entry for `key`, if present. Returns whether one was found.
+    ///
+    /// This is a linear-probed table, so a removed slot can't simply go back to
+    /// `SLOT_EMPTY`: that would stop the probe early and hide any later entry
+    /// that hashed into the same bucket. [`Self::upsert_chown`] and
+    /// [`Self::upsert_inode`] treat tombstones as reusable on insert.
+    pub fn remove_inode(&self, key: InodeKey) -> bool {
+        let (dev, ino) = key;
+        let mut idx = self.hash(dev, ino);
+        for _ in 0..self.slot_count {
+            let slot = self.slot(idx);
+            match slot.occupied.load(Ordering::Acquire) {
+                SLOT_EMPTY => return false,
+                SLOT_LIVE if slot.dev == dev && slot.ino == ino => {
+                    self.write_xattrs(idx, &HashMap::new());
+                    slot.occupied.store(SLOT_TOMBSTONE, Ordering::Release);
+                    return true;
                 }
+                _ => {}
+            }
+            idx = (idx + 1) % self.slot_count;
+        }
+        false
+    }
+
+    /// Offset of the xattr page region, right after the slot table.
+    fn xattr_region_offset(&self) -> usize {
+        std::mem::size_of::<Header>() + std::mem::size_of::<Slot>() * self.slot_count as usize
+    }
+
+    #[allow(clippy::mut_from_ref)] // mmap-backed interior mutability
+    fn xattr_page(&self, index: u32) -> &mut [u8] {
+        let offset = self.xattr_region_offset() + XATTR_PAGE_SIZE * index as usize;
+        unsafe { std::slice::from_raw_parts_mut(self.base.add(offset), XATTR_PAGE_SIZE) }
+    }
+
+    /// Serialize `xattrs` into slot `index`'s page. Silently drops (with a
+    /// warning) anything that doesn't fit in [`XATTR_PAGE_SIZE`] bytes.
+    fn write_xattrs(&self, index: u32, xattrs: &HashMap<String, Vec<u8>>) {
+        let page = self.xattr_page(index);
+        if xattrs.is_empty() {
+            page[..4].copy_from_slice(&0u32.to_le_bytes());
+            return;
+        }
+        let fits = bincode::serialize(xattrs)
+            .ok()
+            .filter(|bytes| bytes.len() <= XATTR_PAGE_SIZE - 4);
+        match fits {
+            Some(bytes) => {
+                page[..4].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
+                page[4..4 + bytes.len()].copy_from_slice(&bytes);
+            }
+            None => {
+                eprintln!(
+                    "pseudoroot: xattrs exceed the {XATTR_PAGE_SIZE}B session limit; not faked"
+                );
+                page[..4].copy_from_slice(&0u32.to_le_bytes());
             }
         }
+    }
+
+    fn read_xattrs(&self, index: u32) -> HashMap<String, Vec<u8>> {
+        let page = self.xattr_page(index);
+        let len = u32::from_le_bytes(page[..4].try_into().unwrap()) as usize;
+        if len == 0 || len > XATTR_PAGE_SIZE - 4 {
+            return HashMap::new();
+        }
+        bincode::deserialize(&page[4..4 + len]).unwrap_or_default()
     }
 
     fn init_header(&self, uid: u32, gid: u32) {
@@ -326,8 +438,10 @@ impl ShmInodeMap {
         header.current_uid.store(uid, Ordering::Relaxed);
         header.current_gid.store(gid, Ordering::Relaxed);
         for i in 0..self.slot_count {
-            self.slot(i).occupied.store(0, Ordering::Relaxed);
+            self.slot(i).occupied.store(SLOT_EMPTY, Ordering::Relaxed);
         }
+        // Xattr pages start zeroed (fresh memfd pages are zero-filled), so
+        // their length prefixes already read as "no xattrs" — no init needed.
     }
 
     fn header(&self) -> &Header {
@@ -419,5 +533,104 @@ mod tests {
         let inode = map.get_inode((9, 42)).unwrap();
         assert_eq!(inode.uid, 1000);
         assert_eq!(inode.gid, 7);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shm_remove_then_relookup_returns_none() {
+        let map = ShmInodeMap::create(256, 0, 0).unwrap();
+        map.upsert_chown((9, 42), 1000, 2000, 0, 0);
+        assert!(map.remove_inode((9, 42)));
+        assert!(map.get_inode((9, 42)).is_none());
+        // Removing again (already a tombstone) reports no entry present.
+        assert!(!map.remove_inode((9, 42)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shm_remove_does_not_break_probing_for_colliding_key() {
+        // Force a collision: create a table small enough that two distinct
+        // keys land in the same bucket, then make sure removing the first
+        // entry doesn't hide the second behind the new tombstone.
+        let map = ShmInodeMap::create(1, 0, 0).unwrap(); // rounds up to 1024 slots
+        let (dev_a, ino_a) = (1u64, 1u64);
+        let (dev_b, ino_b) = (dev_a, ino_a + 1024); // same bucket, mod slot_count
+        map.upsert_chown((dev_a, ino_a), 10, 20, 0, 0);
+        map.upsert_chown((dev_b, ino_b), 30, 40, 0, 0);
+
+        assert!(map.remove_inode((dev_a, ino_a)));
+        assert!(map.get_inode((dev_a, ino_a)).is_none());
+
+        let inode_b = map.get_inode((dev_b, ino_b)).unwrap();
+        assert_eq!(inode_b.uid, 30);
+        assert_eq!(inode_b.gid, 40);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shm_reinsert_into_tombstone_does_not_leak_stale_data() {
+        let map = ShmInodeMap::create(1, 0, 0).unwrap(); // rounds up to 1024 slots
+        let (dev, ino_a) = (1u64, 1u64);
+        let ino_b = ino_a + 1024; // same bucket, mod slot_count
+
+        let mut inode_a = FakeInode::new(10, 20);
+        inode_a
+            .xattrs
+            .insert("security.capability".to_string(), vec![1, 2, 3]);
+        map.upsert_inode((dev, ino_a), &inode_a);
+        assert!(map.remove_inode((dev, ino_a)));
+
+        // A fresh key that probes through the tombstone must not inherit its
+        // uid/gid/mode/xattrs when it lands on the recycled slot.
+        map.upsert_chown((dev, ino_b), 99, 99, 0, 0);
+        let inode_b = map.get_inode((dev, ino_b)).unwrap();
+        assert_eq!(inode_b.uid, 99);
+        assert_eq!(inode_b.gid, 99);
+        assert!(inode_b.xattrs.is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shm_xattr_roundtrip_through_upsert_inode() {
+        let map = ShmInodeMap::create(256, 0, 0).unwrap();
+        let mut inode = FakeInode::new(1000, 2000);
+        inode
+            .xattrs
+            .insert("security.capability".to_string(), vec![0x01, 0x00, 0x02]);
+        inode
+            .xattrs
+            .insert("user.pax.flags".to_string(), b"m".to_vec());
+        map.upsert_inode((9, 43), &inode);
+
+        let read_back = map.get_inode((9, 43)).unwrap();
+        assert_eq!(
+            read_back.xattrs.get("security.capability"),
+            Some(&vec![0x01, 0x00, 0x02])
+        );
+        assert_eq!(read_back.xattrs.get("user.pax.flags"), Some(&b"m".to_vec()));
+
+        // upsert_chown (uid/gid-only merge) must not disturb existing xattrs.
+        map.upsert_chown((9, 43), 1500, ID_UNCHANGED, 0, 0);
+        let read_back = map.get_inode((9, 43)).unwrap();
+        assert_eq!(read_back.uid, 1500);
+        assert_eq!(
+            read_back.xattrs.get("security.capability"),
+            Some(&vec![0x01, 0x00, 0x02])
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shm_oversized_xattr_blob_is_dropped_not_corrupting() {
+        let map = ShmInodeMap::create(256, 0, 0).unwrap();
+        let mut inode = FakeInode::new(0, 0);
+        inode
+            .xattrs
+            .insert("user.big".to_string(), vec![0u8; XATTR_PAGE_SIZE * 2]);
+        map.upsert_inode((9, 44), &inode);
+
+        let read_back = map.get_inode((9, 44)).unwrap();
+        assert_eq!(read_back.uid, 0);
+        assert!(read_back.xattrs.is_empty());
     }
 }

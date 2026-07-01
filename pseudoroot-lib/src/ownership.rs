@@ -10,7 +10,7 @@ use pseudoroot_core::daemon_client::{
     daemon_upsert_chown, init_daemon_connection,
 };
 use pseudoroot_core::shm_client::{
-    init_shm_from_env, shm_get_current_uid_gid, shm_get_inode, shm_mode_active,
+    init_shm_from_env, shm_get_current_uid_gid, shm_get_inode, shm_mode_active, shm_remove_inode,
     shm_set_current_uid_gid, shm_upsert_chown, shm_upsert_inode,
 };
 use pseudoroot_core::state::{
@@ -184,6 +184,10 @@ where
 }
 
 fn remove_inode(key: InodeKey) {
+    if shm_mode_active() {
+        shm_remove_inode(key);
+        return;
+    }
     {
         let state = global_state_write();
         state.remove_inode(key);

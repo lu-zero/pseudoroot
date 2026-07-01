@@ -78,3 +78,8 @@ pub fn shm_upsert_inode(key: InodeKey, inode: &FakeInode) {
         map.upsert_inode(key, inode);
     }
 }
+
+/// Remove inode metadata from shared memory, if present.
+pub fn shm_remove_inode(key: InodeKey) -> bool {
+    map().is_some_and(|map| map.remove_inode(key))
+}
