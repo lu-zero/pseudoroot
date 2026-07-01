@@ -4,7 +4,7 @@
 //! preloaded children via `PSEUDOROOT_SHM_FD`, avoiding per-stat Unix socket RPC.
 //!
 //! Layout: `Header | Slot[slot_count] | XattrPage[slot_count]`. Each slot has a
-//! dedicated [`XATTR_PAGE_SIZE`]-byte page (indexed the same way as its `Slot`)
+//! dedicated `XATTR_PAGE_SIZE`-byte page (indexed the same way as its `Slot`)
 //! holding a bincode-serialized `xattrs` map; entries that don't fit are dropped
 //! (with a warning) rather than corrupting the table.
 

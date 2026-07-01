@@ -4,9 +4,9 @@
 //! Distinct files (rather than one) so a native run actually spreads across
 //! cores instead of contending on a single inode.
 //!
-//!   stat-loop <n_calls> <n_workers> <dir>
+//!   `stat-loop <n_calls> <n_workers> <dir>`
 //!
-//! Prints one line to stderr: workers=<W> stats=<total> wall=<sec> rate=<stats/s>
+//! Prints one line to stderr: `workers=<W> stats=<total> wall=<sec> rate=<stats/s>`
 
 use std::env;
 use std::fs;
