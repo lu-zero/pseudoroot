@@ -8,6 +8,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+/// Device + inode identity for a filesystem object.
+pub type InodeKey = (u64, u64);
+
 /// Represents the ownership of a file or directory
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FileOwnership {
@@ -22,6 +25,47 @@ impl FileOwnership {
     #[must_use]
     pub const fn new(uid: u32, gid: u32) -> Self {
         Self { uid, gid }
+    }
+}
+
+/// Per-inode fake metadata (ownership, mode, extended attributes).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FakeInode {
+    /// The fake user ID
+    pub uid: u32,
+    /// The fake group ID
+    pub gid: u32,
+    /// Full mode to report (type + permission bits). Set by `chmod`/`mknod`.
+    pub mode: Option<u32>,
+    /// Device id to report for device nodes. Set by `mknod`.
+    pub rdev: Option<u64>,
+    /// Faked extended attributes (e.g. `security.capability`).
+    pub xattrs: HashMap<String, Vec<u8>>,
+}
+
+impl FakeInode {
+    /// Create a new inode entry with the given UID and GID.
+    #[must_use]
+    pub fn new(uid: u32, gid: u32) -> Self {
+        Self {
+            uid,
+            gid,
+            mode: None,
+            rdev: None,
+            xattrs: HashMap::new(),
+        }
+    }
+
+    /// Extract the ownership subset.
+    #[must_use]
+    pub const fn ownership(&self) -> FileOwnership {
+        FileOwnership::new(self.uid, self.gid)
+    }
+}
+
+impl From<FileOwnership> for FakeInode {
+    fn from(ownership: FileOwnership) -> Self {
+        Self::new(ownership.uid, ownership.gid)
     }
 }
 
@@ -101,8 +145,8 @@ impl UidGidMap {
 
 /// The global fake root state
 pub struct FakeRootState {
-    /// Map from file path to its fake ownership
-    pub ownership_map: DashMap<String, FileOwnership>,
+    /// Map from `(dev, ino)` to fake inode metadata
+    pub inode_map: DashMap<InodeKey, FakeInode>,
     /// The current fake UID to report (atomic for lock-free reads)
     pub current_uid: AtomicU32,
     /// The current fake GID to report (atomic for lock-free reads)
@@ -112,7 +156,7 @@ pub struct FakeRootState {
 impl Default for FakeRootState {
     fn default() -> Self {
         Self {
-            ownership_map: DashMap::new(),
+            inode_map: DashMap::new(),
             current_uid: AtomicU32::new(0),
             current_gid: AtomicU32::new(0),
         }
@@ -147,23 +191,48 @@ impl FakeRootState {
         self.current_gid.load(Ordering::Relaxed)
     }
 
-    /// Set the ownership of a file or directory (lock-free concurrent insert)
+    /// Record fake metadata for an inode (lock-free concurrent insert)
     #[inline]
-    pub fn set_ownership(&mut self, path: String, ownership: FileOwnership) {
-        self.ownership_map.insert(path, ownership);
+    pub fn set_inode(&mut self, key: InodeKey, inode: FakeInode) {
+        self.inode_map.insert(key, inode);
     }
 
-    /// Get the ownership of a file or directory (lock-free concurrent read)
+    /// Look up fake metadata for an inode (lock-free concurrent read)
     #[inline]
     #[must_use]
-    pub fn get_ownership(&self, path: &str) -> Option<FileOwnership> {
-        self.ownership_map.get(path).map(|entry| *entry.value())
+    pub fn get_inode(&self, key: InodeKey) -> Option<FakeInode> {
+        self.inode_map.get(&key).map(|entry| entry.value().clone())
     }
 
-    /// Remove the ownership entry for a file or directory
+    /// Drop the fake metadata entry for an inode
     #[inline]
-    pub fn remove_ownership(&mut self, path: &str) -> Option<FileOwnership> {
-        self.ownership_map.remove(path).map(|(_, v)| v)
+    pub fn remove_inode(&mut self, key: InodeKey) -> Option<FakeInode> {
+        self.inode_map.remove(&key).map(|(_, v)| v)
+    }
+
+    /// Record fake ownership for an inode (lock-free concurrent insert)
+    #[inline]
+    pub fn set_inode_ownership(&mut self, key: InodeKey, ownership: FileOwnership) {
+        self.inode_map
+            .entry(key)
+            .and_modify(|inode| {
+                inode.uid = ownership.uid;
+                inode.gid = ownership.gid;
+            })
+            .or_insert_with(|| ownership.into());
+    }
+
+    /// Look up fake ownership for an inode (lock-free concurrent read)
+    #[inline]
+    #[must_use]
+    pub fn get_inode_ownership(&self, key: InodeKey) -> Option<FileOwnership> {
+        self.get_inode(key).map(|inode| inode.ownership())
+    }
+
+    /// Drop the fake ownership entry for an inode
+    #[inline]
+    pub fn remove_inode_ownership(&mut self, key: InodeKey) -> Option<FileOwnership> {
+        self.remove_inode(key).map(|inode| inode.ownership())
     }
 }
 
@@ -179,25 +248,15 @@ pub fn init_global_state() -> RwLockWriteGuard<'static, FakeRootState> {
 }
 
 /// Get a read lock on the global fake root state
-///
-/// # Panics
-/// Panics if the global state has not been initialized
 pub fn global_state_read() -> RwLockReadGuard<'static, FakeRootState> {
-    let lock = GLOBAL_STATE
-        .get()
-        .expect("Global state not initialized. Call init_global_state() first.");
+    let lock = GLOBAL_STATE.get_or_init(|| RwLock::new(FakeRootState::new()));
     lock.read()
         .expect("Failed to acquire read lock on global state")
 }
 
 /// Get a write lock on the global fake root state
-///
-/// # Panics
-/// Panics if the global state has not been initialized
 pub fn global_state_write() -> RwLockWriteGuard<'static, FakeRootState> {
-    let lock = GLOBAL_STATE
-        .get()
-        .expect("Global state not initialized. Call init_global_state() first.");
+    let lock = GLOBAL_STATE.get_or_init(|| RwLock::new(FakeRootState::new()));
     lock.write()
         .expect("Failed to acquire write lock on global state")
 }

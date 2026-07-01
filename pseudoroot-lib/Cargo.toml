@@ -8,6 +8,7 @@ repository.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
+test = false
 
 [dependencies]
 ctor.workspace = true

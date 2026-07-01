@@ -4,6 +4,7 @@
 //! for communication between the interposed library and the daemon process.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -209,19 +210,34 @@ pub trait IpcPayload: Serialize + for<'a> Deserialize<'a> {
 
 impl<T: Serialize + for<'a> Deserialize<'a>> IpcPayload for T {}
 
-/// Ownership registration payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OwnershipPayload {
-    pub path: String,
-    pub uid: u32,
-    pub gid: u32,
+/// Inode identity payload
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct InodeKeyPayload {
+    pub dev: u64,
+    pub ino: u64,
 }
 
-/// Ownership query result
+/// Inode state registration payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OwnershipResult {
+pub struct InodeStatePayload {
+    pub dev: u64,
+    pub ino: u64,
     pub uid: u32,
     pub gid: u32,
+    pub mode: Option<u32>,
+    pub rdev: Option<u64>,
+    pub xattrs: HashMap<String, Vec<u8>>,
+}
+
+/// Inode state query result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InodeStateResult {
+    pub found: bool,
+    pub uid: u32,
+    pub gid: u32,
+    pub mode: Option<u32>,
+    pub rdev: Option<u64>,
+    pub xattrs: HashMap<String, Vec<u8>>,
 }
 
 /// UID/GID payload
@@ -229,12 +245,6 @@ pub struct OwnershipResult {
 pub struct UidGidPayload {
     pub uid: u32,
     pub gid: u32,
-}
-
-/// Path payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PathPayload {
-    pub path: String,
 }
 
 #[cfg(test)]
@@ -252,17 +262,25 @@ mod tests {
     }
 
     #[test]
-    fn test_ownership_payload() {
-        let payload = OwnershipPayload {
-            path: "/tmp/test".to_string(),
+    fn test_inode_state_payload() {
+        let payload = InodeStatePayload {
+            dev: 1,
+            ino: 42,
             uid: 1000,
             gid: 2000,
+            mode: Some(0o4755),
+            rdev: Some(0x0803),
+            xattrs: HashMap::from([("security.capability".to_string(), vec![1, 2, 3])]),
         };
         let bytes = payload.to_payload();
-        let decoded: OwnershipPayload = bincode::deserialize(&bytes).unwrap();
-        assert_eq!(decoded.path, "/tmp/test");
+        let decoded: InodeStatePayload = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(decoded.dev, 1);
+        assert_eq!(decoded.ino, 42);
         assert_eq!(decoded.uid, 1000);
         assert_eq!(decoded.gid, 2000);
+        assert_eq!(decoded.mode, Some(0o4755));
+        assert_eq!(decoded.rdev, Some(0x0803));
+        assert_eq!(decoded.xattrs["security.capability"], vec![1, 2, 3]);
     }
 
     #[test]

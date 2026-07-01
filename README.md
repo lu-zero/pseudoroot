@@ -4,238 +4,105 @@
 [![Build Status](https://github.com/lu-zero/pseudoroot/workflows/CI/badge.svg)](https://github.com/lu-zero/pseudoroot/actions?query=workflow:CI)
 [![dependency status](https://deps.rs/repo/github/lu-zero/pseudoroot/status.svg)](https://deps.rs/repo/github/lu-zero/pseudoroot)
 
-A Rust implementation of the fakeroot functionality using library interposition. This allows running commands that think they have root privileges without actually requiring root access.
+A Rust implementation of fakeroot using library interposition (`LD_PRELOAD`). Commands run as if they had root privileges without requiring real root access.
 
-## The `pseudoroot` binary
-
-`pseudoroot` is a command-line tool that runs a specified command with fake root privileges by preloading the pseudoroot library.
-
-### Usage
-
-```bash
-pseudoroot [OPTIONS] -- <command> [args...]
-```
-
-This sets the appropriate environment variable (`LD_PRELOAD` on Linux, `DYLD_INSERT_LIBRARIES` on macOS) and executes the given command with the pseudoroot library preloaded.
-
-### Examples
-
-```bash
-# Run a simple command with fake root (UID=0, GID=0)
-pseudoroot -- id
-
-# Run with a specific fake UID and GID
-pseudoroot --uid 1000 --gid 1000 -- id
-
-# Build a package with fake root
-pseudoroot -- emerge --ask package
-
-# Print the library path
-pseudoroot --print-library-path
-```
-
-### Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--print-library-path` | Print the path to the pseudoroot library and exit | |
-| `--uid <UID>` | Fake UID to use | 0 (root) |
-| `--gid <GID>` | Fake GID to use | 0 (root) |
-| `--help` | Show help message | |
-| `--version` | Show version information | |
-
----
-
-## Architecture
-
-The project uses a Cargo workspace with the following crates:
-
-| Crate | Purpose | Status |
-|-------|---------|--------|
-| `pseudoroot-core` | Shared types, state management, and IPC protocol | Implemented |
-| `pseudoroot-lib` | The interposed shared library (cdylib) | Implemented |
-| `pseudoroot-daemon` | Optional daemon for persistent state | Stub |
-| `pseudoroot` | CLI binary | Working |
-
-**Platform Support:** Both Linux and macOS are fully supported with all 36 syscalls intercepted. Note that `statx` and `capset` return `ENOSYS` on macOS as these syscalls don't exist there, and `renameat2` falls back to `renameat`.
-
-### Implementation Details
-
-The library intercepts the following system calls:
-
-### Credential Functions (Read)
-- **getuid()**, **geteuid()** - Return the fake UID
-- **getgid()**, **getegid()** - Return the fake GID
-- **getresuid()**, **getresgid()** - Return fake real/effective/saved UIDs/GIDs
-
-### Credential Functions (Set)
-- **setuid()**, **setgid()** - Set fake UID/GID
-- **setreuid()**, **setregid()** - Set fake real and effective UID/GID
-- **setresuid()**, **setresgid()** - Set fake real/effective/saved UIDs/GIDs
-- **setfsuid()**, **setfsgid()** - Set fake filesystem UID/GID
-- **setgroups()** - Set supplementary groups (always succeeds in fake mode)
-- **capset()** - Set capabilities (always succeeds in fake mode)
-
-### Stat Family
-- **stat()**, **lstat()** - Return modified file info with fake ownership
-- **fstat()** - Return modified file info for file descriptor with fake ownership
-- **fstatat()** - Return modified file info relative to directory file descriptor
-- **statx()** - Extended stat (Linux-specific)
-
-### Ownership Functions
-- **chown()**, **lchown()** - Record ownership changes and call real implementation
-- **fchown()** - Record ownership changes for file descriptor
-- **fchownat()** - Record ownership changes relative to directory file descriptor
-
-### Mode Functions
-- **chmod()** - Pass through to real implementation
-- **fchmod()** - Change mode by file descriptor
-- **fchmodat()** - Change mode relative to directory file descriptor
-
-### Inode Lifecycle
-- **unlink()** - Remove directory entry and ownership tracking
-- **unlinkat()** - Remove directory entry relative to directory file descriptor
-- **rmdir()** - Remove directory and ownership tracking
-- **rename()** - Move ownership entry from old path to new path
-- **renameat()** - Rename relative to directory file descriptors (Linux)
-- **renameat2()** - Rename with flags relative to directory file descriptors (Linux)
-
-### Inode Creation
-- **mknod()** - Create special file with ownership tracking
-- **mknodat()** - Create special file relative to directory file descriptor
-
-### Extended Attributes (xattr)
-- **setxattr()**, **lsetxattr()**, **fsetxattr()** - Set extended attributes
-- **getxattr()**, **lgetxattr()**, **fgetxattr()** - Get extended attributes
-- **listxattr()**, **llistxattr()**, **flistxattr()** - List extended attributes
-- **removexattr()**, **lremovexattr()**, **fremovexattr()** - Remove extended attributes
-
-The fake state is configured via environment variables:
-- `PSEUDOROOT_UID` - The fake UID to use (default: 0)
-- `PSEUDOROOT_GID` - The fake GID to use (default: 0)
-
-### Performance
-
-Benchmark results (stat() loop across multiple threads, after optimizations):
-
-**Standalone Mode (latest):**
-```
-workers    rate_native/s  rate_pseudoroot/s
-   1         1471097          847049
-   2         2166107         1322809
-   4         4157430         2182618
-   8         5081757         2930461
-
-effective parallelism (rate_w / rate_w1):
-   1             1.00              1.00
-   2             1.45              1.59
-   4             2.69              2.58
-   8             4.69              3.13
-```
-
-**Daemon Mode (latest):**
-```
-workers    standalone/s   daemon/s
-   1          842157       809783
-   2         1306048      1321168
-   4         2048677      2179339
-   8         2712931      2698308
-```
-
-### Performance Analysis
-
-- **Overhead**: The library adds approximately **15-20% overhead** per stat() call (improved from 27% in previous versions)
-- **Parallelism**: Good scaling up to 8 workers due to optimized concurrent data structures
-- **Daemon vs Standalone**: Daemon mode has ~3.8% additional overhead for IPC communication, but provides persistent state across processes
-- **Optimizations Applied**:
-  - Atomic UID/GID for lock-free reads
-  - DashMap for concurrent ownership map access
-  - Reduced lock contention in hot paths
-
-### Comparison with fakeroot/fakeroost
-
-**pseudoroot vs fakeroot Performance (latest benchmarks):**
-
-```
-Benchmark Results:
-   Workers Native (stats/s) pseudoroot (stats/s) fakeroot (stats/s)
-  --------   ------------- ----------------- ----------------
-         1         1467638          824430           50570
-         2         2330732         1274121           46996
-         4         3780662         2051230           52692
-         8         5240792         2663539           40244
-
-Overhead compared to native:
-  pseudoroot:    44.4%
-  fakeroot:      97.1%
-
-pseudoroot is 52.7% MORE EFFICIENT than fakeroot
-
-Parallelism Comparison:
-   Workers       Native x1   pseudoroot x1     fakeroot x1
-  --------      ----------  --------------    ------------
-         1            0.96x            0.97x            1.16x
-         2            1.53x            1.54x            1.05x
-         4            2.74x            2.53x            1.00x
-         8            4.53x            3.11x            1.02x
-```
-
-**Key Differences:**
-
-| Feature | pseudoroot | fakeroot (C) | fakeroost (Rust, ptrace) |
-|---------|-----------|--------------|--------------------------|
-| **Implementation** | Library interposition (LD_PRELOAD) | Library interposition (LD_PRELOAD) | ptrace-based supervisor |
-| **Platform** | Linux, macOS | Linux | Linux |
-| **Single-thread overhead** | ~44% | ~97% | ~97% |
-| **Multi-thread scaling** | Good (3.11x at 8 workers) | Poor (1.02x at 8 workers) | Poor (1.02x at 8 workers) |
-| **Daemon mode** | Yes (persistent state) | Yes (faked) | No |
-| **Syscall coverage** | 36 syscalls | 36 syscalls | 36 syscalls |
-| **xattr support** | Pass-through | Faked (security.capability, ACLs) | Faked |
-| **Architecture** | Simple, single process | Simple, single process | Supervisor + traced process |
-
-**Why pseudoroot is faster:**
-1. **Library interposition** has lower overhead than ptrace-based approaches
-2. **Concurrent data structures** (DashMap, Atomic) enable good parallelism
-3. **No context switching** between supervisor and traced process
-4. **Direct syscall access** without ptrace stop overhead
-
-**Why pseudoroot is better than fakeroot:**
-1. **Rust implementation** - Memory safe, no segfaults
-2. **Modern concurrency** - Better multi-threaded performance
-3. **macOS support** - Works on both Linux and macOS
-4. **Daemon mode** - Persistent state across multiple processes
-5. **Cleaner architecture** - Workspace-based design with clear separation
-
----
-
-## Build Commands
-
-```bash
-cargo build                        # Build all crates
-cargo test                         # Run all tests
-cargo clippy -- -D warnings        # Lint — must be warning-free
-cargo fmt --check                  # Format check — must pass
-```
-
-### Building the Shared Library
-
-The shared library is built automatically with `cargo build`:
+## Quick start
 
 ```bash
 cargo build --release
+cargo install --path pseudoroot
+
+# Implicit run (fakeroot-style, via `pdr` short name)
+pdr -- id
+
+# Explicit subcommands (via `pseudoroot` main name)
+pseudoroot run -- id
+pseudoroot --uid 1000 --gid 1000 -- id
 ```
 
-The library will be created at `target/release/libpseudoroot_lib.so` (Linux) or `target/release/libpseudoroot_lib.dylib` (macOS).
+Short binary names: `pdr` (CLI) and `pdrd` (daemon), alongside `pseudoroot` and `pseudoroot-daemon`.
 
----
+## API (fakeroost-compatible)
 
-## Installation
+Swap backends by changing the import only:
+
+```rust
+use pseudoroot::FakerootCommandExt;
+
+fn main() {
+    pseudoroot::init(); // no-op here; required for fakeroost portability
+    std::process::Command::new("make")
+        .arg("install")
+        .env("PSEUDOROOT_UID", "0")
+        .env("PSEUDOROOT_GID", "0")
+        .fakeroot()
+        .status()
+        .unwrap();
+}
+```
+
+Set `PSEUDOROOT_LIB` to override library discovery (tests, custom installs).
+
+## CLI options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--uid <UID>` | Fake UID | 0 |
+| `--gid <GID>` | Fake GID | 0 |
+| `--daemon` | Use `pdrd` for persistent cross-process state | off |
+| `--socket-path <PATH>` | Daemon socket path | `/tmp/pseudoroot.sock` |
+| `start` / `stop` / `status` | Manage the daemon | — |
+| `print-library-path` | Print the interposed library path | — |
+
+Daemon management:
 
 ```bash
-cargo install --path pseudoroot
+pdrd -s /tmp/pseudoroot.sock          # start daemon
+pdr --daemon --socket-path /tmp/pseudoroot.sock -- make install
+pseudoroot stop --socket-path /tmp/pseudoroot.sock
 ```
 
-## Local Development
+## State model
+
+Fake metadata is keyed by `(dev, ino)` inode identity — not paths — so renames, hard links, and concurrent writers stay consistent.
+
+| Mode | Scope | When to use |
+|------|-------|-------------|
+| **Standalone** (default) | In-memory per process tree; inherited across `fork()` | Single `pdr`/`pseudoroot` invocation, package builds |
+| **Daemon** (`--daemon` / `PSEUDOROOT_DAEMON_SOCKET`) | Shared across separate invocations via Unix socket IPC | Multiple sequential commands that must share fake ownership |
+
+Environment variables:
+
+- `PSEUDOROOT_UID` — fake UID (default: 0)
+- `PSEUDOROOT_GID` — fake GID (default: 0)
+- `PSEUDOROOT_DAEMON_SOCKET` — enable daemon mode (socket path)
+- `PSEUDOROOT_LIB` — override interposed library path
+
+Nothing is written to disk for ownership: `chown` records fake uid/gid in the inode table; `stat`/`statx` overlay the result. The real filesystem uid/gid is unchanged.
+
+## Architecture
+
+| Crate | Purpose |
+|-------|---------|
+| `pseudoroot-core` | Shared types, inode-keyed state, daemon IPC protocol |
+| `pseudoroot-lib` | Interposed cdylib (`LD_PRELOAD`) |
+| `pseudoroot-daemon` | Optional persistent state daemon (`pdrd`) |
+| `pseudoroot` | CLI (`pseudoroot` / `pdr`) and API crate |
+| `pseudoroot-tests` | Integration, CLI, and interposition tests |
+
+**Platform support:** Linux is fully supported. macOS is supported for credential and stat interposition; Linux-only syscalls (`statx`, `capset`, `*xattr`, `mknod`) are gated accordingly.
+
+### Interposed syscall families
+
+- **Credentials** — `getuid`, `setuid`, `setresuid`, `setfsuid`, `setgroups`, `capset`, …
+- **Stat** — `stat`, `lstat`, `fstat`, `fstatat`, `statx` (uid/gid/mode/rdev overlay)
+- **Ownership** — `chown`, `lchown`, `fchown`, `fchownat` (record only, skip real syscall)
+- **Mode** — `chmod`, `fchmod`, `fchmodat` (record fake mode, real syscall with EPERM zeroed)
+- **Inode lifecycle** — `unlink`, `rename`, … (drop stale inode entries)
+- **Creation** — `mknod`, `mknodat` (placeholder file + faked device metadata)
+- **xattr** — all 12 `*xattr` syscalls (fake `security.capability`, ACLs, etc.)
+
+## Build and test
 
 ```bash
 cargo build
@@ -244,13 +111,40 @@ cargo clippy -- -D warnings
 cargo fmt --check
 ```
 
+The shared library is at `target/{debug,release}/libpseudoroot_lib.so` (Linux) or `.dylib` (macOS).
+
+## Performance
+
+Benchmark results (stat loop, standalone mode):
+
+```
+workers    rate_native/s  rate_pseudoroot/s
+   1         1471097          847049
+   8         5081757         2930461
+```
+
+Daemon mode adds ~3–4% IPC overhead but shares state across processes.
+
+Compared to classic fakeroot (~97% overhead, poor threading), pseudoroot's library interposition with `DashMap` and atomic UID/GID achieves substantially lower overhead and better parallelism. See `bench/stat-loop` for the harness.
+
+## Comparison
+
+| Feature | pseudoroot | fakeroot | fakeroost |
+|---------|-----------|----------|-----------|
+| Mechanism | `LD_PRELOAD` | `LD_PRELOAD` | ptrace supervisor |
+| Platforms | Linux, macOS | Linux | Linux |
+| xattr / setcap | Faked | Faked | Faked |
+| mknod unprivileged | Placeholder + fake metadata | Yes | Yes |
+| Multi-process state | Daemon (`pdrd`) | `faked` | N/A (single run) |
+| Rust API | `FakerootCommandExt` | C only | `FakerootCommandExt` |
+
 ## License
 
 Licensed under [MIT](LICENSE-MIT).
 
 ## Contributing
 
-See [AGENTS.md](./AGENTS.md) for project conventions (Conventional Commits, style, checks).
+See [AGENTS.md](./AGENTS.md) for conventions (Conventional Commits, style, MSRV checks).
 
 ## Author
 

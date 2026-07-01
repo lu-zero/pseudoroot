@@ -3,8 +3,9 @@
 //! This module provides Linux-specific implementations using `dlsym(RTLD_NEXT)`
 //! to call the real system functions.
 
+use crate::ownership;
 use std::os::raw::c_char;
-use std::sync::OnceLock;
+use std::sync::{Once, OnceLock};
 
 // Type aliases for function pointers
 type StatFn = unsafe extern "C" fn(*const c_char, *mut libc::stat) -> i32;
@@ -19,7 +20,7 @@ type ChmodFn = unsafe extern "C" fn(*const c_char, libc::mode_t) -> i32;
 type LchownFn = unsafe extern "C" fn(*const c_char, u32, u32) -> i32;
 type FchownFn = unsafe extern "C" fn(i32, u32, u32) -> i32;
 type FstatatFn = unsafe extern "C" fn(i32, *const c_char, *mut libc::stat, i32) -> i32;
-type StatxFn = unsafe extern "C" fn(i32, *const c_char, i32, u32, *mut std::ffi::c_void) -> i32;
+
 type FchownatFn = unsafe extern "C" fn(i32, *const c_char, u32, u32, i32) -> i32;
 type FchmodFn = unsafe extern "C" fn(i32, libc::mode_t) -> i32;
 type FchmodatFn = unsafe extern "C" fn(i32, *const c_char, libc::mode_t, i32) -> i32;
@@ -87,7 +88,7 @@ static REAL_CHMOD: OnceLock<ChmodFn> = OnceLock::new();
 static REAL_LCHOWN: OnceLock<LchownFn> = OnceLock::new();
 static REAL_FCHOWN: OnceLock<FchownFn> = OnceLock::new();
 static REAL_FSTATAT: OnceLock<FstatatFn> = OnceLock::new();
-static REAL_STATX: OnceLock<StatxFn> = OnceLock::new();
+
 static REAL_FCHOWNAT: OnceLock<FchownatFn> = OnceLock::new();
 static REAL_FCHMOD: OnceLock<FchmodFn> = OnceLock::new();
 static REAL_FCHMODAT: OnceLock<FchmodatFn> = OnceLock::new();
@@ -125,154 +126,160 @@ static REAL_REMOVEXATTR: OnceLock<RemovexattrFn> = OnceLock::new();
 static REAL_LREMOVEXATTR: OnceLock<LremovexattrFn> = OnceLock::new();
 static REAL_FREMOVEXATTR: OnceLock<FremovexattrFn> = OnceLock::new();
 
-/// Initialize the function pointers by looking up the real functions
-#[ctor::ctor]
-fn init() {
-    unsafe {
-        REAL_STAT.set(get_next_function::<StatFn>(b"stat\0")).ok();
-        REAL_FSTAT
-            .set(get_next_function::<FstatFn>(b"fstat\0"))
-            .ok();
-        REAL_LSTAT
-            .set(get_next_function::<LstatFn>(b"lstat\0"))
-            .ok();
-        REAL_GETUID
-            .set(get_next_function::<GetuidFn>(b"getuid\0"))
-            .ok();
-        REAL_GETEUID
-            .set(get_next_function::<GeteuidFn>(b"geteuid\0"))
-            .ok();
-        REAL_GETGID
-            .set(get_next_function::<GetgidFn>(b"getgid\0"))
-            .ok();
-        REAL_GETEGID
-            .set(get_next_function::<GetegidFn>(b"getegid\0"))
-            .ok();
-        REAL_CHOWN
-            .set(get_next_function::<ChownFn>(b"chown\0"))
-            .ok();
-        REAL_CHMOD
-            .set(get_next_function::<ChmodFn>(b"chmod\0"))
-            .ok();
-        REAL_LCHOWN
-            .set(get_next_function::<LchownFn>(b"lchown\0"))
-            .ok();
-        REAL_FCHOWN
-            .set(get_next_function::<FchownFn>(b"fchown\0"))
-            .ok();
-        REAL_FSTATAT
-            .set(get_next_function::<FstatatFn>(b"fstatat\0"))
-            .ok();
-        REAL_STATX
-            .set(get_next_function::<StatxFn>(b"statx\0"))
-            .ok();
-        REAL_FCHOWNAT
-            .set(get_next_function::<FchownatFn>(b"fchownat\0"))
-            .ok();
-        REAL_FCHMOD
-            .set(get_next_function::<FchmodFn>(b"fchmod\0"))
-            .ok();
-        REAL_FCHMODAT
-            .set(get_next_function::<FchmodatFn>(b"fchmodat\0"))
-            .ok();
-        REAL_GETRESUID
-            .set(get_next_function::<GetresuidFn>(b"getresuid\0"))
-            .ok();
-        REAL_GETRESGID
-            .set(get_next_function::<GetresgidFn>(b"getresgid\0"))
-            .ok();
-        REAL_SETUID
-            .set(get_next_function::<SetuidFn>(b"setuid\0"))
-            .ok();
-        REAL_SETGID
-            .set(get_next_function::<SetgidFn>(b"setgid\0"))
-            .ok();
-        REAL_SETREUID
-            .set(get_next_function::<SetreuidFn>(b"setreuid\0"))
-            .ok();
-        REAL_SETREGID
-            .set(get_next_function::<SetregidFn>(b"setregid\0"))
-            .ok();
-        REAL_SETRESUID
-            .set(get_next_function::<SetresuidFn>(b"setresuid\0"))
-            .ok();
-        REAL_SETRESGID
-            .set(get_next_function::<SetresgidFn>(b"setresgid\0"))
-            .ok();
-        REAL_SETFSUID
-            .set(get_next_function::<SetfsuidFn>(b"setfsuid\0"))
-            .ok();
-        REAL_SETFSGID
-            .set(get_next_function::<SetfsgidFn>(b"setfsgid\0"))
-            .ok();
-        REAL_UNLINK
-            .set(get_next_function::<UnlinkFn>(b"unlink\0"))
-            .ok();
-        REAL_UNLINKAT
-            .set(get_next_function::<UnlinkatFn>(b"unlinkat\0"))
-            .ok();
-        REAL_RMDIR
-            .set(get_next_function::<RmdirFn>(b"rmdir\0"))
-            .ok();
-        REAL_RENAME
-            .set(get_next_function::<RenameFn>(b"rename\0"))
-            .ok();
-        REAL_RENAMEAT
-            .set(get_next_function::<RenameatFn>(b"renameat\0"))
-            .ok();
-        REAL_RENAMEAT2
-            .set(get_next_function::<Renameat2Fn>(b"renameat2\0"))
-            .ok();
-        REAL_MKNOD
-            .set(get_next_function::<MknodFn>(b"mknod\0"))
-            .ok();
-        REAL_MKNODAT
-            .set(get_next_function::<MknodatFn>(b"mknodat\0"))
-            .ok();
-        REAL_SETGROUPS
-            .set(get_next_function::<SetgroupsFn>(b"setgroups\0"))
-            .ok();
-        REAL_CAPSET
-            .set(get_next_function::<CapsetFn>(b"capset\0"))
-            .ok();
-        // xattr functions
-        REAL_SETXATTR
-            .set(get_next_function::<SetxattrFn>(b"setxattr\0"))
-            .ok();
-        REAL_LSETXATTR
-            .set(get_next_function::<LsetxattrFn>(b"lsetxattr\0"))
-            .ok();
-        REAL_FSETXATTR
-            .set(get_next_function::<FsetxattrFn>(b"fsetxattr\0"))
-            .ok();
-        REAL_GETXATTR
-            .set(get_next_function::<GetxattrFn>(b"getxattr\0"))
-            .ok();
-        REAL_LGETXATTR
-            .set(get_next_function::<LgetxattrFn>(b"lgetxattr\0"))
-            .ok();
-        REAL_FGETXATTR
-            .set(get_next_function::<FgetxattrFn>(b"fgetxattr\0"))
-            .ok();
-        REAL_LISTXATTR
-            .set(get_next_function::<ListxattrFn>(b"listxattr\0"))
-            .ok();
-        REAL_LLISTXATTR
-            .set(get_next_function::<LlistxattrFn>(b"llistxattr\0"))
-            .ok();
-        REAL_FLISTXATTR
-            .set(get_next_function::<FlistxattrFn>(b"flistxattr\0"))
-            .ok();
-        REAL_REMOVEXATTR
-            .set(get_next_function::<RemovexattrFn>(b"removexattr\0"))
-            .ok();
-        REAL_LREMOVEXATTR
-            .set(get_next_function::<LremovexattrFn>(b"lremovexattr\0"))
-            .ok();
-        REAL_FREMOVEXATTR
-            .set(get_next_function::<FremovexattrFn>(b"fremovexattr\0"))
-            .ok();
+static REAL_FUNCS_INIT: Once = Once::new();
+
+fn ensure_real_funcs() {
+    if !ownership::library_init_done() {
+        return;
     }
+    REAL_FUNCS_INIT.call_once(|| unsafe {
+        init_real_funcs();
+    });
+}
+
+/// Initialize the function pointers by looking up the real functions
+unsafe fn init_real_funcs() {
+    REAL_STAT.set(get_next_function::<StatFn>(b"stat\0")).ok();
+    REAL_FSTAT
+        .set(get_next_function::<FstatFn>(b"fstat\0"))
+        .ok();
+    REAL_LSTAT
+        .set(get_next_function::<LstatFn>(b"lstat\0"))
+        .ok();
+    REAL_GETUID
+        .set(get_next_function::<GetuidFn>(b"getuid\0"))
+        .ok();
+    REAL_GETEUID
+        .set(get_next_function::<GeteuidFn>(b"geteuid\0"))
+        .ok();
+    REAL_GETGID
+        .set(get_next_function::<GetgidFn>(b"getgid\0"))
+        .ok();
+    REAL_GETEGID
+        .set(get_next_function::<GetegidFn>(b"getegid\0"))
+        .ok();
+    REAL_CHOWN
+        .set(get_next_function::<ChownFn>(b"chown\0"))
+        .ok();
+    REAL_CHMOD
+        .set(get_next_function::<ChmodFn>(b"chmod\0"))
+        .ok();
+    REAL_LCHOWN
+        .set(get_next_function::<LchownFn>(b"lchown\0"))
+        .ok();
+    REAL_FCHOWN
+        .set(get_next_function::<FchownFn>(b"fchown\0"))
+        .ok();
+    REAL_FSTATAT
+        .set(get_next_function::<FstatatFn>(b"fstatat\0"))
+        .ok();
+
+    REAL_FCHOWNAT
+        .set(get_next_function::<FchownatFn>(b"fchownat\0"))
+        .ok();
+    REAL_FCHMOD
+        .set(get_next_function::<FchmodFn>(b"fchmod\0"))
+        .ok();
+    REAL_FCHMODAT
+        .set(get_next_function::<FchmodatFn>(b"fchmodat\0"))
+        .ok();
+    REAL_GETRESUID
+        .set(get_next_function::<GetresuidFn>(b"getresuid\0"))
+        .ok();
+    REAL_GETRESGID
+        .set(get_next_function::<GetresgidFn>(b"getresgid\0"))
+        .ok();
+    REAL_SETUID
+        .set(get_next_function::<SetuidFn>(b"setuid\0"))
+        .ok();
+    REAL_SETGID
+        .set(get_next_function::<SetgidFn>(b"setgid\0"))
+        .ok();
+    REAL_SETREUID
+        .set(get_next_function::<SetreuidFn>(b"setreuid\0"))
+        .ok();
+    REAL_SETREGID
+        .set(get_next_function::<SetregidFn>(b"setregid\0"))
+        .ok();
+    REAL_SETRESUID
+        .set(get_next_function::<SetresuidFn>(b"setresuid\0"))
+        .ok();
+    REAL_SETRESGID
+        .set(get_next_function::<SetresgidFn>(b"setresgid\0"))
+        .ok();
+    REAL_SETFSUID
+        .set(get_next_function::<SetfsuidFn>(b"setfsuid\0"))
+        .ok();
+    REAL_SETFSGID
+        .set(get_next_function::<SetfsgidFn>(b"setfsgid\0"))
+        .ok();
+    REAL_UNLINK
+        .set(get_next_function::<UnlinkFn>(b"unlink\0"))
+        .ok();
+    REAL_UNLINKAT
+        .set(get_next_function::<UnlinkatFn>(b"unlinkat\0"))
+        .ok();
+    REAL_RMDIR
+        .set(get_next_function::<RmdirFn>(b"rmdir\0"))
+        .ok();
+    REAL_RENAME
+        .set(get_next_function::<RenameFn>(b"rename\0"))
+        .ok();
+    REAL_RENAMEAT
+        .set(get_next_function::<RenameatFn>(b"renameat\0"))
+        .ok();
+    REAL_RENAMEAT2
+        .set(get_next_function::<Renameat2Fn>(b"renameat2\0"))
+        .ok();
+    REAL_MKNOD
+        .set(get_next_function::<MknodFn>(b"mknod\0"))
+        .ok();
+    REAL_MKNODAT
+        .set(get_next_function::<MknodatFn>(b"mknodat\0"))
+        .ok();
+    REAL_SETGROUPS
+        .set(get_next_function::<SetgroupsFn>(b"setgroups\0"))
+        .ok();
+    REAL_CAPSET
+        .set(get_next_function::<CapsetFn>(b"capset\0"))
+        .ok();
+    // xattr functions
+    REAL_SETXATTR
+        .set(get_next_function::<SetxattrFn>(b"setxattr\0"))
+        .ok();
+    REAL_LSETXATTR
+        .set(get_next_function::<LsetxattrFn>(b"lsetxattr\0"))
+        .ok();
+    REAL_FSETXATTR
+        .set(get_next_function::<FsetxattrFn>(b"fsetxattr\0"))
+        .ok();
+    REAL_GETXATTR
+        .set(get_next_function::<GetxattrFn>(b"getxattr\0"))
+        .ok();
+    REAL_LGETXATTR
+        .set(get_next_function::<LgetxattrFn>(b"lgetxattr\0"))
+        .ok();
+    REAL_FGETXATTR
+        .set(get_next_function::<FgetxattrFn>(b"fgetxattr\0"))
+        .ok();
+    REAL_LISTXATTR
+        .set(get_next_function::<ListxattrFn>(b"listxattr\0"))
+        .ok();
+    REAL_LLISTXATTR
+        .set(get_next_function::<LlistxattrFn>(b"llistxattr\0"))
+        .ok();
+    REAL_FLISTXATTR
+        .set(get_next_function::<FlistxattrFn>(b"flistxattr\0"))
+        .ok();
+    REAL_REMOVEXATTR
+        .set(get_next_function::<RemovexattrFn>(b"removexattr\0"))
+        .ok();
+    REAL_LREMOVEXATTR
+        .set(get_next_function::<LremovexattrFn>(b"lremovexattr\0"))
+        .ok();
+    REAL_FREMOVEXATTR
+        .set(get_next_function::<FremovexattrFn>(b"fremovexattr\0"))
+        .ok();
 }
 
 /// Helper function to look up a function using dlsym(RTLD_NEXT)
@@ -295,27 +302,22 @@ pub struct LinuxHelper;
 
 impl LinuxHelper {
     unsafe fn real_stat(path: *const c_char, buf: *mut libc::stat) -> i32 {
-        if let Some(func) = REAL_STAT.get() {
-            func(path, buf)
-        } else {
-            libc::stat(path, buf)
-        }
+        // Always syscall: dlsym(RTLD_NEXT) can resolve back into our own hooks.
+        libc::syscall(libc::SYS_newfstatat, libc::AT_FDCWD, path, buf, 0) as i32
     }
 
     unsafe fn real_fstat(fd: i32, buf: *mut libc::stat) -> i32 {
-        if let Some(func) = REAL_FSTAT.get() {
-            func(fd, buf)
-        } else {
-            libc::fstat(fd, buf)
-        }
+        libc::syscall(libc::SYS_fstat, fd, buf) as i32
     }
 
     unsafe fn real_lstat(path: *const c_char, buf: *mut libc::stat) -> i32 {
-        if let Some(func) = REAL_LSTAT.get() {
-            func(path, buf)
-        } else {
-            libc::lstat(path, buf)
-        }
+        libc::syscall(
+            libc::SYS_newfstatat,
+            libc::AT_FDCWD,
+            path,
+            buf,
+            libc::AT_SYMLINK_NOFOLLOW,
+        ) as i32
     }
 
     unsafe fn real_getuid() -> u32 {
@@ -351,35 +353,26 @@ impl LinuxHelper {
     }
 
     unsafe fn real_chown(path: *const c_char, uid: u32, gid: u32) -> i32 {
-        if let Some(func) = REAL_CHOWN.get() {
-            func(path, uid, gid)
-        } else {
-            libc::chown(path, uid, gid)
-        }
+        libc::syscall(libc::SYS_fchownat, libc::AT_FDCWD, path, uid, gid, 0) as i32
     }
 
     unsafe fn real_chmod(path: *const c_char, mode: libc::mode_t) -> i32 {
-        if let Some(func) = REAL_CHMOD.get() {
-            func(path, mode)
-        } else {
-            libc::chmod(path, mode)
-        }
+        libc::syscall(libc::SYS_fchmodat, libc::AT_FDCWD, path, mode, 0) as i32
     }
 
     unsafe fn real_lchown(path: *const c_char, uid: u32, gid: u32) -> i32 {
-        if let Some(func) = REAL_LCHOWN.get() {
-            func(path, uid, gid)
-        } else {
-            libc::lchown(path, uid, gid)
-        }
+        libc::syscall(
+            libc::SYS_fchownat,
+            libc::AT_FDCWD,
+            path,
+            uid,
+            gid,
+            libc::AT_SYMLINK_NOFOLLOW,
+        ) as i32
     }
 
     unsafe fn real_fchown(fd: i32, uid: u32, gid: u32) -> i32 {
-        if let Some(func) = REAL_FCHOWN.get() {
-            func(fd, uid, gid)
-        } else {
-            libc::fchown(fd, uid, gid)
-        }
+        libc::syscall(libc::SYS_fchown, fd, uid, gid) as i32
     }
 
     #[cfg(target_os = "linux")]
@@ -389,11 +382,7 @@ impl LinuxHelper {
         buf: *mut libc::stat,
         flags: i32,
     ) -> i32 {
-        if let Some(func) = REAL_FSTATAT.get() {
-            func(dirfd, pathname, buf, flags)
-        } else {
-            libc::fstatat(dirfd, pathname, buf, flags)
-        }
+        libc::syscall(libc::SYS_newfstatat, dirfd, pathname, buf, flags) as i32
     }
 
     #[cfg(target_os = "linux")]
@@ -404,12 +393,9 @@ impl LinuxHelper {
         mask: u32,
         buf: *mut std::ffi::c_void,
     ) -> i32 {
-        if let Some(func) = REAL_STATX.get() {
-            func(dirfd, pathname, flags, mask, buf)
-        } else {
-            // Use the syscall directly: calling libc::statx would recurse through our hook.
-            libc::syscall(libc::SYS_statx, dirfd, pathname, flags, mask, buf) as i32
-        }
+        // Always use the syscall directly: calling libc::statx or dlsym(statx) would
+        // recurse through our hook.
+        libc::syscall(libc::SYS_statx, dirfd, pathname, flags, mask, buf) as i32
     }
 
     #[cfg(target_os = "linux")]
@@ -420,19 +406,11 @@ impl LinuxHelper {
         gid: u32,
         flags: i32,
     ) -> i32 {
-        if let Some(func) = REAL_FCHOWNAT.get() {
-            func(dirfd, path, uid, gid, flags)
-        } else {
-            libc::fchownat(dirfd, path, uid, gid, flags)
-        }
+        libc::syscall(libc::SYS_fchownat, dirfd, path, uid, gid, flags) as i32
     }
 
     unsafe fn real_fchmod(fd: i32, mode: libc::mode_t) -> i32 {
-        if let Some(func) = REAL_FCHMOD.get() {
-            func(fd, mode)
-        } else {
-            libc::fchmod(fd, mode)
-        }
+        libc::syscall(libc::SYS_fchmod, fd, mode) as i32
     }
 
     #[cfg(target_os = "linux")]
@@ -442,11 +420,7 @@ impl LinuxHelper {
         mode: libc::mode_t,
         flags: i32,
     ) -> i32 {
-        if let Some(func) = REAL_FCHMODAT.get() {
-            func(dirfd, path, mode, flags)
-        } else {
-            libc::fchmodat(dirfd, path, mode, flags)
-        }
+        libc::syscall(libc::SYS_fchmodat, dirfd, path, mode, flags) as i32
     }
 
     unsafe fn real_getresuid(ruid: *mut u32, euid: *mut u32, suid: *mut u32) -> i32 {
@@ -778,46 +752,57 @@ impl LinuxHelper {
 
 // Re-export the functions for use in the main lib.rs
 pub unsafe fn real_stat(path: *const c_char, buf: *mut libc::stat) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_stat(path, buf)
 }
 
 pub unsafe fn real_fstat(fd: i32, buf: *mut libc::stat) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_fstat(fd, buf)
 }
 
 pub unsafe fn real_lstat(path: *const c_char, buf: *mut libc::stat) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_lstat(path, buf)
 }
 
 pub unsafe fn real_getuid() -> u32 {
+    ensure_real_funcs();
     LinuxHelper::real_getuid()
 }
 
 pub unsafe fn real_geteuid() -> u32 {
+    ensure_real_funcs();
     LinuxHelper::real_geteuid()
 }
 
 pub unsafe fn real_getgid() -> u32 {
+    ensure_real_funcs();
     LinuxHelper::real_getgid()
 }
 
 pub unsafe fn real_getegid() -> u32 {
+    ensure_real_funcs();
     LinuxHelper::real_getegid()
 }
 
 pub unsafe fn real_chown(path: *const c_char, uid: u32, gid: u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_chown(path, uid, gid)
 }
 
 pub unsafe fn real_chmod(path: *const c_char, mode: libc::mode_t) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_chmod(path, mode)
 }
 
 pub unsafe fn real_lchown(path: *const c_char, uid: u32, gid: u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_lchown(path, uid, gid)
 }
 
 pub unsafe fn real_fchown(fd: i32, uid: u32, gid: u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_fchown(fd, uid, gid)
 }
 
@@ -828,6 +813,7 @@ pub unsafe fn real_fstatat(
     buf: *mut libc::stat,
     flags: i32,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_fstatat(dirfd, pathname, buf, flags)
 }
 
@@ -839,6 +825,7 @@ pub unsafe fn real_statx(
     mask: u32,
     buf: *mut std::ffi::c_void,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_statx(dirfd, pathname, flags, mask, buf)
 }
 
@@ -850,11 +837,13 @@ pub unsafe fn real_fchownat(
     gid: u32,
     flags: i32,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_fchownat(dirfd, path, uid, gid, flags)
 }
 
 #[cfg(target_os = "linux")]
 pub unsafe fn real_fchmod(fd: i32, mode: libc::mode_t) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_fchmod(fd, mode)
 }
 
@@ -865,63 +854,78 @@ pub unsafe fn real_fchmodat(
     mode: libc::mode_t,
     flags: i32,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_fchmodat(dirfd, path, mode, flags)
 }
 
 pub unsafe fn real_getresuid(ruid: *mut u32, euid: *mut u32, suid: *mut u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_getresuid(ruid, euid, suid)
 }
 
 pub unsafe fn real_getresgid(rgid: *mut u32, egid: *mut u32, sgid: *mut u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_getresgid(rgid, egid, sgid)
 }
 
 pub unsafe fn real_setuid(uid: u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_setuid(uid)
 }
 
 pub unsafe fn real_setgid(gid: u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_setgid(gid)
 }
 
 pub unsafe fn real_setreuid(ruid: u32, euid: u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_setreuid(ruid, euid)
 }
 
 pub unsafe fn real_setregid(rgid: u32, egid: u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_setregid(rgid, egid)
 }
 
 pub unsafe fn real_setresuid(ruid: u32, euid: u32, suid: u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_setresuid(ruid, euid, suid)
 }
 
 pub unsafe fn real_setresgid(rgid: u32, egid: u32, sgid: u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_setresgid(rgid, egid, sgid)
 }
 
 pub unsafe fn real_setfsuid(uid: u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_setfsuid(uid)
 }
 
 pub unsafe fn real_setfsgid(gid: u32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_setfsgid(gid)
 }
 
 pub unsafe fn real_unlink(path: *const c_char) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_unlink(path)
 }
 
 #[cfg(target_os = "linux")]
 pub unsafe fn real_unlinkat(dirfd: i32, path: *const c_char, flags: i32) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_unlinkat(dirfd, path, flags)
 }
 
 pub unsafe fn real_rmdir(path: *const c_char) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_rmdir(path)
 }
 
 pub unsafe fn real_rename(oldpath: *const c_char, newpath: *const c_char) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_rename(oldpath, newpath)
 }
 
@@ -932,6 +936,7 @@ pub unsafe fn real_renameat(
     newdirfd: i32,
     newpath: *const c_char,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_renameat(olddirfd, oldpath, newdirfd, newpath)
 }
 
@@ -943,11 +948,13 @@ pub unsafe fn real_renameat2(
     newpath: *const c_char,
     flags: u32,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_renameat2(olddirfd, oldpath, newdirfd, newpath, flags)
 }
 
 #[cfg(target_os = "linux")]
 pub unsafe fn real_mknod(pathname: *const c_char, mode: libc::mode_t, dev: libc::dev_t) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_mknod(pathname, mode, dev)
 }
 
@@ -958,15 +965,18 @@ pub unsafe fn real_mknodat(
     mode: libc::mode_t,
     dev: libc::dev_t,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_mknodat(dirfd, pathname, mode, dev)
 }
 
 pub unsafe fn real_setgroups(size: libc::size_t, list: *const libc::gid_t) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_setgroups(size, list)
 }
 
 #[cfg(target_os = "linux")]
 pub unsafe fn real_capset(hdrp: *const std::ffi::c_void, data: *const std::ffi::c_void) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_capset(hdrp, data)
 }
 
@@ -979,6 +989,7 @@ pub unsafe fn real_setxattr(
     size: libc::size_t,
     flags: i32,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_setxattr(path, name, value, size, flags)
 }
 
@@ -990,6 +1001,7 @@ pub unsafe fn real_lsetxattr(
     size: libc::size_t,
     flags: i32,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_lsetxattr(path, name, value, size, flags)
 }
 
@@ -1001,6 +1013,7 @@ pub unsafe fn real_fsetxattr(
     size: libc::size_t,
     flags: i32,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_fsetxattr(fd, name, value, size, flags)
 }
 
@@ -1011,6 +1024,7 @@ pub unsafe fn real_getxattr(
     value: *mut std::ffi::c_void,
     size: libc::size_t,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_getxattr(path, name, value, size)
 }
 
@@ -1021,6 +1035,7 @@ pub unsafe fn real_lgetxattr(
     value: *mut std::ffi::c_void,
     size: libc::size_t,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_lgetxattr(path, name, value, size)
 }
 
@@ -1031,35 +1046,42 @@ pub unsafe fn real_fgetxattr(
     value: *mut std::ffi::c_void,
     size: libc::size_t,
 ) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_fgetxattr(fd, name, value, size)
 }
 
 #[cfg(target_os = "linux")]
 pub unsafe fn real_listxattr(path: *const c_char, list: *mut c_char, size: libc::size_t) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_listxattr(path, list, size)
 }
 
 #[cfg(target_os = "linux")]
 pub unsafe fn real_llistxattr(path: *const c_char, list: *mut c_char, size: libc::size_t) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_llistxattr(path, list, size)
 }
 
 #[cfg(target_os = "linux")]
 pub unsafe fn real_flistxattr(fd: i32, list: *mut c_char, size: libc::size_t) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_flistxattr(fd, list, size)
 }
 
 #[cfg(target_os = "linux")]
 pub unsafe fn real_removexattr(path: *const c_char, name: *const c_char) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_removexattr(path, name)
 }
 
 #[cfg(target_os = "linux")]
 pub unsafe fn real_lremovexattr(path: *const c_char, name: *const c_char) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_lremovexattr(path, name)
 }
 
 #[cfg(target_os = "linux")]
 pub unsafe fn real_fremovexattr(fd: i32, name: *const c_char) -> i32 {
+    ensure_real_funcs();
     LinuxHelper::real_fremovexattr(fd, name)
 }

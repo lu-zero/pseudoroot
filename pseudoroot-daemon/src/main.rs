@@ -20,12 +20,14 @@
 //! - `--uid UID` - Initial fake UID (default: 0)
 //! - `--gid GID` - Initial fake GID (default: 0)
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use pseudoroot_core::protocol::{
-    IpcPayload, MessageType, OwnershipPayload, OwnershipResult, PathPayload, ProtocolMessage,
+    InodeKeyPayload, InodeStatePayload, InodeStateResult, IpcPayload, MessageType, ProtocolMessage,
     UidGidPayload, DEFAULT_SOCKET_PATH,
 };
+use pseudoroot_core::state::FakeInode;
 use pseudoroot_core::state::FakeRootState;
+use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -35,9 +37,21 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 
+/// Installed as `pseudoroot-daemon` (main) and `pdrd` (short).
+fn program_name() -> &'static str {
+    if env::current_exe()
+        .ok()
+        .and_then(|p| p.file_stem().map(|s| s.to_owned()))
+        .is_some_and(|s| s == "pdrd")
+    {
+        "pdrd"
+    } else {
+        "pseudoroot-daemon"
+    }
+}
+
 /// Configuration for the daemon
 #[derive(Parser, Debug)]
-#[command(name = "pseudoroot-daemon")]
 #[command(author = "Luca Barbato <lu_zero@gentoo.org>")]
 #[command(version = "0.1.0")]
 #[command(about = "Daemon for persistent fake root state")]
@@ -159,45 +173,57 @@ fn handle_client(mut stream: UnixStream, state: Arc<RwLock<FakeRootState>>, verb
                 }
             }
             MessageType::RegisterOwnership => {
-                if let Some(payload) = OwnershipPayload::from_payload(&message.payload) {
+                if let Some(payload) = InodeStatePayload::from_payload(&message.payload) {
                     let mut state = state.write().unwrap();
-                    state.set_ownership(
-                        payload.path,
-                        pseudoroot_core::state::FileOwnership::new(payload.uid, payload.gid),
+                    state.set_inode(
+                        (payload.dev, payload.ino),
+                        FakeInode {
+                            uid: payload.uid,
+                            gid: payload.gid,
+                            mode: payload.mode,
+                            rdev: payload.rdev,
+                            xattrs: payload.xattrs,
+                        },
                     );
                     ProtocolMessage::response(message.request_id, vec![])
                 } else {
-                    ProtocolMessage::error(message.request_id, "Invalid OwnershipPayload")
+                    ProtocolMessage::error(message.request_id, "Invalid InodeStatePayload")
                 }
             }
             MessageType::GetOwnership => {
-                if let Some(payload) = PathPayload::from_payload(&message.payload) {
+                if let Some(payload) = InodeKeyPayload::from_payload(&message.payload) {
                     let state = state.read().unwrap();
-                    if let Some(ownership) = state.get_ownership(&payload.path) {
-                        let result = OwnershipResult {
-                            uid: ownership.uid,
-                            gid: ownership.gid,
-                        };
-                        ProtocolMessage::response(message.request_id, result.to_payload())
+                    let result = if let Some(inode) = state.get_inode((payload.dev, payload.ino)) {
+                        InodeStateResult {
+                            found: true,
+                            uid: inode.uid,
+                            gid: inode.gid,
+                            mode: inode.mode,
+                            rdev: inode.rdev,
+                            xattrs: inode.xattrs,
+                        }
                     } else {
-                        // Return default (current) UID/GID
-                        let result = OwnershipResult {
-                            uid: state.current_uid(),
-                            gid: state.current_gid(),
-                        };
-                        ProtocolMessage::response(message.request_id, result.to_payload())
-                    }
+                        InodeStateResult {
+                            found: false,
+                            uid: 0,
+                            gid: 0,
+                            mode: None,
+                            rdev: None,
+                            xattrs: std::collections::HashMap::new(),
+                        }
+                    };
+                    ProtocolMessage::response(message.request_id, result.to_payload())
                 } else {
-                    ProtocolMessage::error(message.request_id, "Invalid PathPayload")
+                    ProtocolMessage::error(message.request_id, "Invalid InodeKeyPayload")
                 }
             }
             MessageType::RemoveOwnership => {
-                if let Some(payload) = PathPayload::from_payload(&message.payload) {
+                if let Some(payload) = InodeKeyPayload::from_payload(&message.payload) {
                     let mut state = state.write().unwrap();
-                    state.remove_ownership(&payload.path);
+                    state.remove_inode((payload.dev, payload.ino));
                     ProtocolMessage::response(message.request_id, vec![])
                 } else {
-                    ProtocolMessage::error(message.request_id, "Invalid PathPayload")
+                    ProtocolMessage::error(message.request_id, "Invalid InodeKeyPayload")
                 }
             }
             MessageType::Init => {
@@ -248,7 +274,9 @@ fn cleanup_socket(socket_path: &PathBuf) {
 }
 
 fn main() {
-    let args = Args::parse();
+    let name = program_name();
+    let args = Args::command().bin_name(name).get_matches_from(env::args());
+    let args = Args::from_arg_matches(&args).unwrap_or_else(|e| e.exit());
 
     // Clean up any existing socket
     cleanup_socket(&args.socket_path);
@@ -274,14 +302,8 @@ fn main() {
         eprintln!("Warning: Failed to set socket permissions: {}", e);
     }
 
-    println!(
-        "pseudoroot-daemon: Listening on {}",
-        args.socket_path.display()
-    );
-    println!(
-        "pseudoroot-daemon: Initial UID={}, GID={}",
-        args.uid, args.gid
-    );
+    println!("{}: Listening on {}", name, args.socket_path.display());
+    println!("{}: Initial UID={}, GID={}", name, args.uid, args.gid);
     println!("Press Ctrl+C to stop");
 
     let socket_path_clone = args.socket_path.clone();
@@ -289,7 +311,7 @@ fn main() {
 
     // Handle Ctrl+C for graceful shutdown
     ctrlc::set_handler(move || {
-        println!("\npseudoroot-daemon: Shutting down...");
+        println!("\n{name}: Shutting down...");
         if cleanup_on_exit {
             cleanup_socket(&socket_path_clone);
         }

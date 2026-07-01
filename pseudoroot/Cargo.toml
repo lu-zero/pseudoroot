@@ -6,8 +6,16 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[lib]
+name = "pseudoroot"
+path = "src/lib.rs"
+
 [[bin]]
 name = "pseudoroot"
+path = "src/bin/pseudoroot.rs"
+
+[[bin]]
+name = "pdr"
 path = "src/bin/pseudoroot.rs"
 
 [dependencies]

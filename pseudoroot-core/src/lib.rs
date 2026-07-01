@@ -7,7 +7,7 @@ pub mod daemon_client;
 pub mod protocol;
 pub mod state;
 
-pub use state::{FakeRootState, FileOwnership, UidGidMap};
+pub use state::{FakeInode, FakeRootState, FileOwnership, InodeKey, UidGidMap};
 
 #[cfg(test)]
 mod tests {
@@ -69,23 +69,35 @@ mod tests {
     }
 
     #[test]
-    fn test_fake_root_state_ownership() {
+    fn test_fake_root_state_inode_ownership() {
         let mut state = FakeRootState::new();
         let ownership = FileOwnership::new(3000, 4000);
-        state.set_ownership("/tmp/test".to_string(), ownership);
-        assert_eq!(state.get_ownership("/tmp/test"), Some(ownership));
+        let key = (1u64, 42u64);
+        state.set_inode_ownership(key, ownership);
+        assert_eq!(state.get_inode_ownership(key), Some(ownership));
     }
 
     #[test]
-    fn test_fake_root_state_remove_ownership() {
+    fn test_fake_root_state_inode_mode() {
+        let mut state = FakeRootState::new();
+        let key = (1u64, 42u64);
+        let mut inode = FakeInode::new(0, 0);
+        inode.mode = Some(0o4755);
+        state.set_inode(key, inode.clone());
+        assert_eq!(state.get_inode(key), Some(inode));
+    }
+
+    #[test]
+    fn test_fake_root_state_remove_inode_ownership() {
         let mut state = FakeRootState::new();
         let ownership = FileOwnership::new(3000, 4000);
-        state.set_ownership("/tmp/test".to_string(), ownership);
-        assert_eq!(state.get_ownership("/tmp/test"), Some(ownership));
+        let key = (1u64, 42u64);
+        state.set_inode_ownership(key, ownership);
+        assert_eq!(state.get_inode_ownership(key), Some(ownership));
 
-        let removed = state.remove_ownership("/tmp/test");
+        let removed = state.remove_inode_ownership(key);
         assert_eq!(removed, Some(ownership));
-        assert_eq!(state.get_ownership("/tmp/test"), None);
+        assert_eq!(state.get_inode_ownership(key), None);
     }
 
     #[test]

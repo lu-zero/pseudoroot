@@ -9,7 +9,7 @@
 //! The library maintains a global fake state that tracks:
 //! - The current fake UID and GID
 //! - A mapping from real to fake UID/GID
-//! - File ownership information
+//! - Inode-keyed file ownership information
 //!
 //! When intercepted functions are called, they return values from this fake state
 //! instead of the real system state.
@@ -28,17 +28,18 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+mod inode;
+mod ownership;
 mod platform;
 
-use pseudoroot_core::daemon_client::{
-    daemon_get_current_uid_gid, daemon_get_ownership, daemon_init, daemon_mode_enabled,
-    daemon_remove_ownership, daemon_set_current_uid_gid, daemon_set_ownership,
-    init_daemon_connection,
+use ownership::{
+    current_fake_gid, current_fake_uid, fake_getxattr_fd, fake_getxattr_path, fake_listxattr_fd,
+    fake_listxattr_path, fake_mknod_path, fake_mknodat, fake_removexattr_fd, fake_removexattr_path,
+    fake_setxattr_fd, fake_setxattr_path, maybe_remove_inode_at, maybe_remove_inode_path,
+    modify_stat_buf, prepare_rename_overwrite, record_chmod_at, record_chmod_fd, record_chmod_path,
+    record_chown_at, record_chown_fd, record_chown_path, set_current_ids, set_fsuid,
+    setfsgid as set_fake_fsgid,
 };
-use pseudoroot_core::state::{
-    global_state_read, global_state_write, init_global_state, FileOwnership,
-};
-use std::env;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -48,87 +49,25 @@ use std::os::raw::c_char;
 /// thanks to the `ctor` crate.
 #[ctor::ctor]
 unsafe fn init() {
-    // Initialize the global state and set initial UID/GID from environment
-    let mut state = init_global_state();
-
-    // Read configuration from environment variables
-    let uid = env::var("PSEUDOROOT_UID")
+    let uid = std::env::var("PSEUDOROOT_UID")
         .ok()
         .and_then(|u| u.parse::<u32>().ok())
         .unwrap_or(0);
-    let gid = env::var("PSEUDOROOT_GID")
+    let gid = std::env::var("PSEUDOROOT_GID")
         .ok()
         .and_then(|g| g.parse::<u32>().ok())
         .unwrap_or(0);
-
-    state.set_current(uid, gid);
-    // The guard is dropped here, but the global state is initialized and configured
-
-    // Initialize daemon connection if daemon mode is enabled
-    if daemon_mode_enabled() {
-        let _ = init_daemon_connection();
-        // Initialize daemon with our UID/GID
-        let _ = daemon_init(uid, gid);
-    }
+    ownership::store_bootstrap_ids(uid, gid);
 }
 
 pub use platform::*;
-
-fn set_current_ids(uid: u32, gid: u32) -> i32 {
-    if daemon_mode_enabled() && daemon_set_current_uid_gid(uid, gid) {
-        return 0;
-    }
-    let mut state = global_state_write();
-    state.set_current(uid, gid);
-    0
-}
-
-fn record_ownership(path: String, ownership: FileOwnership) {
-    if daemon_mode_enabled() {
-        let _ = daemon_set_ownership(path, ownership);
-        return;
-    }
-    let mut state = global_state_write();
-    state.set_ownership(path, ownership);
-}
-
-fn remove_tracked_ownership(path: &str) {
-    if daemon_mode_enabled() {
-        let _ = daemon_remove_ownership(path);
-        return;
-    }
-    let mut state = global_state_write();
-    state.remove_ownership(path);
-}
-
-fn rename_tracked_ownership(old_path: String, new_path: String) {
-    if daemon_mode_enabled() {
-        if let Some(ownership) = daemon_get_ownership(&old_path) {
-            let _ = daemon_set_ownership(new_path, ownership);
-            let _ = daemon_remove_ownership(&old_path);
-        }
-        return;
-    }
-    let mut state = global_state_write();
-    if let Some(ownership) = state.remove_ownership(&old_path) {
-        state.set_ownership(new_path, ownership);
-    }
-}
 
 /// Get the current fake UID
 ///
 /// This wraps the real getuid() system call to return the fake UID.
 #[unsafe(no_mangle)]
 pub extern "C" fn getuid() -> u32 {
-    // Check if daemon mode is enabled
-    if daemon_mode_enabled() {
-        if let Some((uid, _)) = daemon_get_current_uid_gid() {
-            return uid;
-        }
-    }
-    // Fall back to global state
-    let state = global_state_read();
-    state.current_uid()
+    current_fake_uid()
 }
 
 /// Get the current effective UID
@@ -136,8 +75,7 @@ pub extern "C" fn getuid() -> u32 {
 /// This wraps the real geteuid() system call to return the fake effective UID.
 #[unsafe(no_mangle)]
 pub extern "C" fn geteuid() -> u32 {
-    // For simplicity, we treat uid and euid the same in fake mode
-    getuid()
+    current_fake_uid()
 }
 
 /// Get the current GID
@@ -145,15 +83,7 @@ pub extern "C" fn geteuid() -> u32 {
 /// This wraps the real getgid() system call to return the fake GID.
 #[unsafe(no_mangle)]
 pub extern "C" fn getgid() -> u32 {
-    // Check if daemon mode is enabled
-    if daemon_mode_enabled() {
-        if let Some((_, gid)) = daemon_get_current_uid_gid() {
-            return gid;
-        }
-    }
-    // Fall back to global state
-    let state = global_state_read();
-    state.current_gid()
+    current_fake_gid()
 }
 
 /// Get the current effective GID
@@ -161,8 +91,7 @@ pub extern "C" fn getgid() -> u32 {
 /// This wraps the real getegid() system call to return the fake effective GID.
 #[unsafe(no_mangle)]
 pub extern "C" fn getegid() -> u32 {
-    // For simplicity, we treat gid and egid the same in fake mode
-    getgid()
+    current_fake_gid()
 }
 
 /// Get real, effective, and saved user IDs
@@ -252,13 +181,13 @@ pub extern "C" fn setresgid(_rgid: u32, egid: u32, _sgid: u32) -> i32 {
 /// Set filesystem user ID
 #[unsafe(no_mangle)]
 pub extern "C" fn setfsuid(uid: u32) -> i32 {
-    set_current_ids(uid, getgid())
+    set_fsuid(uid) as i32
 }
 
 /// Set filesystem group ID
 #[unsafe(no_mangle)]
 pub extern "C" fn setfsgid(gid: u32) -> i32 {
-    set_current_ids(getuid(), gid)
+    set_fake_fsgid(gid) as i32
 }
 
 /// Set file ownership
@@ -266,11 +195,7 @@ pub extern "C" fn setfsgid(gid: u32) -> i32 {
 /// This intercepts chown() to record ownership changes in our fake state.
 #[unsafe(no_mangle)]
 pub extern "C" fn chown(path: *const c_char, uid: u32, gid: u32) -> i32 {
-    if let Some(path_str) = unsafe { cstr_to_string(path) } {
-        record_ownership(path_str, FileOwnership::new(uid, gid));
-    }
-
-    unsafe { platform::real_chown(path, uid, gid) }
+    record_chown_path(path, false, uid, gid)
 }
 
 /// Get file status
@@ -278,12 +203,10 @@ pub extern "C" fn chown(path: *const c_char, uid: u32, gid: u32) -> i32 {
 /// This wraps stat() to return fake ownership information.
 #[unsafe(no_mangle)]
 pub extern "C" fn stat(path: *const c_char, buf: *mut libc::stat) -> i32 {
-    // First, call the real stat to get actual file info
     let result = unsafe { platform::real_stat(path, buf) };
 
     if result == 0 && !buf.is_null() {
-        // Successfully got file info, now modify ownership fields
-        unsafe { modify_stat_ownership(path, buf) };
+        unsafe { modify_stat_buf(buf) };
     }
 
     result
@@ -292,13 +215,10 @@ pub extern "C" fn stat(path: *const c_char, buf: *mut libc::stat) -> i32 {
 /// Get file status for a file descriptor
 #[unsafe(no_mangle)]
 pub extern "C" fn fstat(fd: i32, buf: *mut libc::stat) -> i32 {
-    // First, call the real fstat to get actual file info
     let result = unsafe { platform::real_fstat(fd, buf) };
 
     if result == 0 && !buf.is_null() {
-        // Successfully got file info, but we can't map fd to path easily
-        // For now, just apply the global fake UID/GID
-        unsafe { modify_stat_ownership_by_uid_gid(buf) };
+        unsafe { modify_stat_buf(buf) };
     }
 
     result
@@ -307,12 +227,10 @@ pub extern "C" fn fstat(fd: i32, buf: *mut libc::stat) -> i32 {
 /// Get file status for a path with symbolic link following
 #[unsafe(no_mangle)]
 pub extern "C" fn lstat(path: *const c_char, buf: *mut libc::stat) -> i32 {
-    // First, call the real lstat to get actual file info
     let result = unsafe { platform::real_lstat(path, buf) };
 
     if result == 0 && !buf.is_null() {
-        // Successfully got file info, now modify ownership fields
-        unsafe { modify_stat_ownership(path, buf) };
+        unsafe { modify_stat_buf(buf) };
     }
 
     result
@@ -327,13 +245,10 @@ pub extern "C" fn fstatat(
     buf: *mut libc::stat,
     flags: i32,
 ) -> i32 {
-    // First, call the real fstatat to get actual file info
     let result = unsafe { platform::real_fstatat(dirfd, pathname, buf, flags) };
 
     if result == 0 && !buf.is_null() {
-        // Successfully got file info, now modify ownership fields
-        // For now, we use the pathname (won't work correctly for relative paths)
-        unsafe { modify_stat_ownership(pathname, buf) };
+        unsafe { modify_stat_buf(buf) };
     }
 
     result
@@ -349,112 +264,51 @@ pub extern "C" fn statx(
     mask: u32,
     buf: *mut std::ffi::c_void,
 ) -> i32 {
-    // For now, just pass through to the real statx
-    // In a full implementation, we would modify the ownership fields in the statx buffer
-    unsafe { platform::real_statx(dirfd, pathname, flags, mask, buf) }
+    let result = unsafe { platform::real_statx(dirfd, pathname, flags, mask, buf) };
+
+    if result == 0 && !buf.is_null() {
+        unsafe { ownership::modify_statx_buf(buf) };
+    }
+
+    result
 }
 
 /// Change file mode
 #[unsafe(no_mangle)]
 pub extern "C" fn chmod(path: *const c_char, mode: libc::mode_t) -> i32 {
-    // Just pass through to the real chmod for now
-    // In a full implementation, we might want to track file modes too
-    unsafe { platform::real_chmod(path, mode) }
+    record_chmod_path(path, mode)
 }
 
 /// Change file mode by file descriptor
 #[unsafe(no_mangle)]
 pub extern "C" fn fchmod(fd: i32, mode: libc::mode_t) -> i32 {
-    // Just pass through to the real fchmod for now
-    // In a full implementation, we might want to track file modes too
-    unsafe { platform::real_fchmod(fd, mode) }
+    record_chmod_fd(fd, mode)
 }
 
 /// Change file mode relative to directory file descriptor
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn fchmodat(dirfd: i32, path: *const c_char, mode: libc::mode_t, flags: i32) -> i32 {
-    // Just pass through to the real fchmodat for now
-    unsafe { platform::real_fchmodat(dirfd, path, mode, flags) }
+    record_chmod_at(dirfd, path, mode, flags)
 }
 
 /// Change file ownership by path (no symlink following)
 #[unsafe(no_mangle)]
 pub extern "C" fn lchown(path: *const c_char, uid: u32, gid: u32) -> i32 {
-    if let Some(path_str) = unsafe { cstr_to_string(path) } {
-        record_ownership(path_str, FileOwnership::new(uid, gid));
-    }
-
-    unsafe { platform::real_lchown(path, uid, gid) }
+    record_chown_path(path, true, uid, gid)
 }
 
 /// Change file ownership by file descriptor
 #[unsafe(no_mangle)]
 pub extern "C" fn fchown(fd: i32, uid: u32, gid: u32) -> i32 {
-    // Can't easily map fd to path, so just pass through to real fchown
-    unsafe { platform::real_fchown(fd, uid, gid) }
+    record_chown_fd(fd, uid, gid)
 }
 
 /// Change file ownership relative to directory file descriptor
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn fchownat(dirfd: i32, path: *const c_char, uid: u32, gid: u32, flags: i32) -> i32 {
-    if let Some(path_str) = unsafe { cstr_to_string(path) } {
-        record_ownership(path_str, FileOwnership::new(uid, gid));
-    }
-
-    unsafe { platform::real_fchownat(dirfd, path, uid, gid, flags) }
-}
-
-/// Modify stat buffer ownership fields based on path-specific ownership
-///
-/// # Safety
-/// The caller must ensure that buf is a valid pointer to a libc::stat struct.
-unsafe fn modify_stat_ownership(path: *const c_char, buf: *mut libc::stat) {
-    if buf.is_null() {
-        return;
-    }
-
-    // Try to get path-specific ownership from our fake state
-    if let Some(path_str) = cstr_to_string(path) {
-        if daemon_mode_enabled() {
-            if let Some(ownership) = daemon_get_ownership(&path_str) {
-                unsafe {
-                    (*buf).st_uid = ownership.uid as libc::uid_t;
-                    (*buf).st_gid = ownership.gid as libc::gid_t;
-                }
-                return;
-            }
-        } else {
-            let state = global_state_read();
-            if let Some(ownership) = state.get_ownership(&path_str) {
-                unsafe {
-                    (*buf).st_uid = ownership.uid as libc::uid_t;
-                    (*buf).st_gid = ownership.gid as libc::gid_t;
-                }
-                return;
-            }
-        }
-    }
-
-    // No path-specific ownership, apply global fake UID/GID
-    unsafe { modify_stat_ownership_by_uid_gid(buf) };
-}
-
-/// Modify stat buffer ownership fields based on global fake UID/GID
-///
-/// # Safety
-/// The caller must ensure that buf is a valid pointer to a libc::stat struct.
-unsafe fn modify_stat_ownership_by_uid_gid(buf: *mut libc::stat) {
-    if buf.is_null() {
-        return;
-    }
-
-    let state = global_state_read();
-    unsafe {
-        (*buf).st_uid = state.current_uid() as libc::uid_t;
-        (*buf).st_gid = state.current_gid() as libc::gid_t;
-    }
+    record_chown_at(dirfd, path, flags, uid, gid)
 }
 
 /// Helper function to convert C string to Rust string
@@ -471,10 +325,7 @@ pub unsafe fn cstr_to_string(cstr: *const c_char) -> Option<String> {
 /// Remove directory entry (delete file)
 #[unsafe(no_mangle)]
 pub extern "C" fn unlink(path: *const c_char) -> i32 {
-    if let Some(path_str) = unsafe { cstr_to_string(path) } {
-        remove_tracked_ownership(&path_str);
-    }
-
+    maybe_remove_inode_path(path);
     unsafe { platform::real_unlink(path) }
 }
 
@@ -482,32 +333,21 @@ pub extern "C" fn unlink(path: *const c_char) -> i32 {
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn unlinkat(dirfd: i32, path: *const c_char, flags: i32) -> i32 {
-    if let Some(path_str) = unsafe { cstr_to_string(path) } {
-        remove_tracked_ownership(&path_str);
-    }
-
+    maybe_remove_inode_at(dirfd, path, flags);
     unsafe { platform::real_unlinkat(dirfd, path, flags) }
 }
 
 /// Remove directory
 #[unsafe(no_mangle)]
 pub extern "C" fn rmdir(path: *const c_char) -> i32 {
-    if let Some(path_str) = unsafe { cstr_to_string(path) } {
-        remove_tracked_ownership(&path_str);
-    }
-
+    maybe_remove_inode_path(path);
     unsafe { platform::real_rmdir(path) }
 }
 
 /// Rename a file
 #[unsafe(no_mangle)]
 pub extern "C" fn rename(oldpath: *const c_char, newpath: *const c_char) -> i32 {
-    if let (Some(old_str), Some(new_str)) = (unsafe { cstr_to_string(oldpath) }, unsafe {
-        cstr_to_string(newpath)
-    }) {
-        rename_tracked_ownership(old_str, new_str);
-    }
-
+    prepare_rename_overwrite(libc::AT_FDCWD, oldpath, libc::AT_FDCWD, newpath);
     unsafe { platform::real_rename(oldpath, newpath) }
 }
 
@@ -520,14 +360,7 @@ pub extern "C" fn renameat(
     newdirfd: i32,
     newpath: *const c_char,
 ) -> i32 {
-    if olddirfd == libc::AT_FDCWD && newdirfd == libc::AT_FDCWD {
-        if let (Some(old_str), Some(new_str)) = (unsafe { cstr_to_string(oldpath) }, unsafe {
-            cstr_to_string(newpath)
-        }) {
-            rename_tracked_ownership(old_str, new_str);
-        }
-    }
-
+    prepare_rename_overwrite(olddirfd, oldpath, newdirfd, newpath);
     unsafe { platform::real_renameat(olddirfd, oldpath, newdirfd, newpath) }
 }
 
@@ -541,14 +374,7 @@ pub extern "C" fn renameat2(
     newpath: *const c_char,
     flags: u32,
 ) -> i32 {
-    if olddirfd == libc::AT_FDCWD && newdirfd == libc::AT_FDCWD {
-        if let (Some(old_str), Some(new_str)) = (unsafe { cstr_to_string(oldpath) }, unsafe {
-            cstr_to_string(newpath)
-        }) {
-            rename_tracked_ownership(old_str, new_str);
-        }
-    }
-
+    prepare_rename_overwrite(olddirfd, oldpath, newdirfd, newpath);
     unsafe { platform::real_renameat2(olddirfd, oldpath, newdirfd, newpath, flags) }
 }
 
@@ -556,11 +382,7 @@ pub extern "C" fn renameat2(
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn mknod(pathname: *const c_char, mode: libc::mode_t, dev: libc::dev_t) -> i32 {
-    if let Some(path_str) = unsafe { cstr_to_string(pathname) } {
-        record_ownership(path_str, FileOwnership::new(getuid(), getgid()));
-    }
-
-    unsafe { platform::real_mknod(pathname, mode, dev) }
+    fake_mknod_path(pathname, mode, dev)
 }
 
 /// Create a special file relative to directory file descriptor
@@ -572,17 +394,12 @@ pub extern "C" fn mknodat(
     mode: libc::mode_t,
     dev: libc::dev_t,
 ) -> i32 {
-    if let Some(path_str) = unsafe { cstr_to_string(pathname) } {
-        record_ownership(path_str, FileOwnership::new(getuid(), getgid()));
-    }
-
-    unsafe { platform::real_mknodat(dirfd, pathname, mode, dev) }
+    fake_mknodat(dirfd, pathname, mode, dev)
 }
 
 /// Set supplementary group IDs - always succeeds in fake mode
 #[unsafe(no_mangle)]
 pub extern "C" fn setgroups(_size: libc::size_t, _list: *const libc::gid_t) -> i32 {
-    // In fake mode, we just succeed (don't actually change groups)
     0
 }
 
@@ -590,12 +407,10 @@ pub extern "C" fn setgroups(_size: libc::size_t, _list: *const libc::gid_t) -> i
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn capset(_hdrp: *const std::ffi::c_void, _data: *const std::ffi::c_void) -> i32 {
-    // In fake mode, we just succeed (don't actually change capabilities)
     0
 }
 
-// xattr functions - for now, just pass through to real functions
-// In a full implementation, we might want to fake xattr ownership
+// xattr functions — fake security.capability and other xattrs in the inode table
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn setxattr(
@@ -603,9 +418,9 @@ pub extern "C" fn setxattr(
     name: *const c_char,
     value: *const std::ffi::c_void,
     size: libc::size_t,
-    flags: i32,
+    _flags: i32,
 ) -> i32 {
-    unsafe { platform::real_setxattr(path, name, value, size, flags) }
+    fake_setxattr_path(path, name, value, size, false)
 }
 
 #[cfg(target_os = "linux")]
@@ -615,9 +430,9 @@ pub extern "C" fn lsetxattr(
     name: *const c_char,
     value: *const std::ffi::c_void,
     size: libc::size_t,
-    flags: i32,
+    _flags: i32,
 ) -> i32 {
-    unsafe { platform::real_lsetxattr(path, name, value, size, flags) }
+    fake_setxattr_path(path, name, value, size, true)
 }
 
 #[cfg(target_os = "linux")]
@@ -627,9 +442,9 @@ pub extern "C" fn fsetxattr(
     name: *const c_char,
     value: *const std::ffi::c_void,
     size: libc::size_t,
-    flags: i32,
+    _flags: i32,
 ) -> i32 {
-    unsafe { platform::real_fsetxattr(fd, name, value, size, flags) }
+    fake_setxattr_fd(fd, name, value, size)
 }
 
 #[cfg(target_os = "linux")]
@@ -640,7 +455,7 @@ pub extern "C" fn getxattr(
     value: *mut std::ffi::c_void,
     size: libc::size_t,
 ) -> i32 {
-    unsafe { platform::real_getxattr(path, name, value, size) }
+    fake_getxattr_path(path, name, value, size, false)
 }
 
 #[cfg(target_os = "linux")]
@@ -651,7 +466,7 @@ pub extern "C" fn lgetxattr(
     value: *mut std::ffi::c_void,
     size: libc::size_t,
 ) -> i32 {
-    unsafe { platform::real_lgetxattr(path, name, value, size) }
+    fake_getxattr_path(path, name, value, size, true)
 }
 
 #[cfg(target_os = "linux")]
@@ -662,74 +477,41 @@ pub extern "C" fn fgetxattr(
     value: *mut std::ffi::c_void,
     size: libc::size_t,
 ) -> i32 {
-    unsafe { platform::real_fgetxattr(fd, name, value, size) }
+    fake_getxattr_fd(fd, name, value, size)
 }
 
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn listxattr(path: *const c_char, list: *mut c_char, size: libc::size_t) -> i32 {
-    unsafe { platform::real_listxattr(path, list, size) }
+    fake_listxattr_path(path, list, size, false)
 }
 
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn llistxattr(path: *const c_char, list: *mut c_char, size: libc::size_t) -> i32 {
-    unsafe { platform::real_llistxattr(path, list, size) }
+    fake_listxattr_path(path, list, size, true)
 }
 
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn flistxattr(fd: i32, list: *mut c_char, size: libc::size_t) -> i32 {
-    unsafe { platform::real_flistxattr(fd, list, size) }
+    fake_listxattr_fd(fd, list, size)
 }
 
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn removexattr(path: *const c_char, name: *const c_char) -> i32 {
-    unsafe { platform::real_removexattr(path, name) }
+    fake_removexattr_path(path, name, false)
 }
 
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn lremovexattr(path: *const c_char, name: *const c_char) -> i32 {
-    unsafe { platform::real_lremovexattr(path, name) }
+    fake_removexattr_path(path, name, true)
 }
 
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub extern "C" fn fremovexattr(fd: i32, name: *const c_char) -> i32 {
-    unsafe { platform::real_fremovexattr(fd, name) }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_cstr_to_string_null() {
-        unsafe {
-            let result = cstr_to_string(std::ptr::null());
-            assert_eq!(result, None);
-        }
-    }
-
-    #[test]
-    fn test_cstr_to_string_valid() {
-        use std::ffi::CString;
-        unsafe {
-            let c_str = CString::new("test").unwrap();
-            let result = cstr_to_string(c_str.as_ptr());
-            assert_eq!(result, Some("test".to_string()));
-        }
-    }
-
-    #[test]
-    fn test_cstr_to_string_empty() {
-        use std::ffi::CString;
-        unsafe {
-            let c_str = CString::new("").unwrap();
-            let result = cstr_to_string(c_str.as_ptr());
-            assert_eq!(result, Some("".to_string()));
-        }
-    }
+    fake_removexattr_fd(fd, name)
 }
