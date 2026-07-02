@@ -135,6 +135,16 @@ fn accept_loop(
         }
         match listener.accept() {
             Ok((stream, _)) => {
+                // BSD/macOS accept() inherits the listener's O_NONBLOCK (Linux
+                // does not), which would make the handler's blocking read_exact
+                // fail with WouldBlock and drop the client after one message.
+                // Force blocking mode on the accepted stream regardless.
+                if let Err(err) = stream.set_nonblocking(false) {
+                    if verbose {
+                        eprintln!("Daemon: could not set client to blocking: {err}");
+                    }
+                    continue;
+                }
                 let state_clone = Arc::clone(&state);
                 let shutdown_clone = Arc::clone(&shutdown);
                 thread::spawn(move || handle_client(stream, state_clone, shutdown_clone, verbose));
@@ -322,4 +332,58 @@ fn send_message(stream: &mut UnixStream, message: &ProtocolMessage) -> io::Resul
 
 fn remove_socket(socket_path: &Path) {
     let _ = fs::remove_file(socket_path);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{ChownPayload, InodeKeyPayload, InodeStateResult, IpcChannel};
+
+    /// Two requests on one connection must both be served. This is the
+    /// regression guard for BSD/macOS `accept()` inheriting the listener's
+    /// non-blocking flag: before the explicit `set_nonblocking(false)` on the
+    /// accepted stream, the handler's second `read_exact` hit `WouldBlock`,
+    /// dropped the client, and the second request failed with `BrokenPipe`.
+    #[test]
+    fn serves_multiple_requests_on_one_connection() {
+        let dir = std::env::temp_dir().join(format!("pdr-daemon-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let sock = dir.join("d.sock");
+
+        let daemon = SessionDaemon::start(&sock, 0, 0).unwrap();
+        let mut ch = IpcChannel::new(daemon.socket_path());
+        ch.connect().unwrap();
+
+        let chown = ChownPayload {
+            dev: 9,
+            ino: 42,
+            uid: 99999,
+            gid: 88888,
+            default_uid: 0,
+            default_gid: 0,
+        };
+        let resp = ch
+            .request(ProtocolMessage::new(
+                MessageType::UpsertChown,
+                chown.to_payload(),
+                1,
+            ))
+            .unwrap();
+        assert_eq!(resp.message_type, MessageType::Response);
+
+        let key = InodeKeyPayload { dev: 9, ino: 42 };
+        let resp = ch
+            .request(ProtocolMessage::new(
+                MessageType::GetOwnership,
+                key.to_payload(),
+                2,
+            ))
+            .expect("second request on the same connection must succeed");
+        let result = InodeStateResult::from_payload(&resp.payload).unwrap();
+        assert!(result.found);
+        assert_eq!(result.uid, 99999);
+        assert_eq!(result.gid, 88888);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
