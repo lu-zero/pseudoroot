@@ -8,9 +8,15 @@ fn main() {
     // skipped on macOS, which uses `__DATA,__interpose` and has no `ld` `-Wl,
     // --version-script`).
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        // The version script lives with the bundled interposition source under
+        // `pseudoroot/interpose/` (this thin shim package has no `src/` of its own).
         let manifest_dir =
             PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-        let version_script = manifest_dir.join("pseudoroot.lds");
+        let version_script = manifest_dir
+            .join("..")
+            .join("pseudoroot")
+            .join("interpose")
+            .join("pseudoroot.lds");
         println!("cargo:rerun-if-changed={}", version_script.display());
         println!(
             "cargo:rustc-cdylib-link-arg=-Wl,--version-script={}",

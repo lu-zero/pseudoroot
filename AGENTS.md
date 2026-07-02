@@ -22,9 +22,9 @@ done
 Workspace crates live at the repository root:
 
 - `pseudoroot-core` — shared types, state management, and IPC protocol
-- `pseudoroot-lib` — cdylib that intercepts system calls via library interposition
+- `pseudoroot-lib` — thin shim that builds the interposed cdylib from the source bundled at `pseudoroot/interpose/` (kept as a separate member so the test harness can `cargo build -p pseudoroot-lib` and scan `target/{debug,release}` for the artifact)
 - `pseudoroot-daemon` — daemon for persistent state across processes
-- `pseudoroot` — CLI binary that preloads the library and executes commands
+- `pseudoroot` — CLI binary that preloads the library and executes commands; `build.rs` compiles the interposition source into a cdylib and embeds it
 - `pseudoroot-tests` — integration and interposition tests
 
 See [docs/architecture.md](docs/architecture.md) for architecture reference.

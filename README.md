@@ -109,11 +109,12 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-`cargo build -p pseudoroot` nests a `cargo build -p pseudoroot-lib`
-invocation (see `pseudoroot/build.rs`) to embed the interposed library into
-the `pdr` binary — no separate install step needed. For a standalone `pdrd`
-daemon binary, build the `pseudoroot-daemon` package directly:
-`cargo build -p pseudoroot-daemon`.
+`pdr` embeds the interposed library at build time: `pseudoroot/build.rs`
+compiles the cdylib from the source bundled at `pseudoroot/interpose/` and
+`include_bytes!`es it into the binary — so `cargo install pseudoroot` from
+crates.io is self-contained, with no separate `.so`/`.dylib` to install.
+For a standalone `pdrd` daemon binary, build the `pseudoroot-daemon` package
+directly: `cargo build -p pseudoroot-daemon`.
 
 ## License
 

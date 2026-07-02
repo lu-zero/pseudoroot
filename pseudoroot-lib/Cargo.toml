@@ -6,8 +6,14 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+# Dev/CI-only shim: builds the cdylib from `pseudoroot/interpose/src/` so the
+# test harness can scan `target/{debug,release}` for the artifact. The source
+# lives inside the `pseudoroot` package, so this shim is not publishable.
+publish = false
 
 [lib]
+name = "pseudoroot_lib"
+path = "../pseudoroot/interpose/src/lib.rs"
 crate-type = ["cdylib"]
 test = false
 

@@ -21,15 +21,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-      # pseudoroot-lib is a cdylib with no Cargo dependents (pseudoroot-tests
-      # finds it at runtime by scanning target/{debug,release}, not via a
-      # `[dependencies]` edge) and its own unit tests are disabled, so
-      # `cargo test --workspace` alone never builds it. Build the workspace
-      # explicitly first, as AGENTS.md's documented dev flow does. Note:
-      # `pseudoroot`'s build.rs (which embeds pseudoroot-lib's cdylib into
-      # the `pdr` binary) builds pseudoroot-lib too, but into an isolated
-      # OUT_DIR-scoped target-dir, not target/{debug,release} — it doesn't
-      # satisfy pseudoroot-tests's scan, so this step is still required.
+      # `pseudoroot-lib` (the thin cdylib shim over `pseudoroot/interpose/src`)
+      # has no Cargo dependents — pseudoroot-tests finds it at runtime by
+      # scanning target/{debug,release}, not via a `[dependencies]` edge — and
+      # its unit tests are disabled, so `cargo test --workspace` alone never
+      # builds it. Build the workspace explicitly first, as AGENTS.md's
+      # documented dev flow does. Note: `pseudoroot`'s build.rs builds its own
+      # copy of the cdylib (into an isolated OUT_DIR-scoped target-dir) to embed
+      # into the `pdr` binary, not target/{debug,release} — that doesn't satisfy
+      # pseudoroot-tests's scan, so this step is still required.
       - run: cargo build --workspace
       - run: cargo test --workspace
 
