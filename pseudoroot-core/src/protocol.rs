@@ -105,6 +105,24 @@ impl ProtocolMessage {
     }
 }
 
+/// Write a length-prefixed frame (4-byte big-endian length + payload).
+pub fn write_framed(stream: &mut impl Write, bytes: &[u8]) -> std::io::Result<()> {
+    let len = (bytes.len() as u32).to_be_bytes();
+    stream.write_all(&len)?;
+    stream.write_all(bytes)?;
+    stream.flush()
+}
+
+/// Read a length-prefixed frame (4-byte big-endian length + payload).
+pub fn read_framed(stream: &mut impl Read) -> std::io::Result<Vec<u8>> {
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf)?;
+    let len = u32::from_be_bytes(len_buf) as usize;
+    let mut buf = vec![0u8; len];
+    stream.read_exact(&mut buf)?;
+    Ok(buf)
+}
+
 /// IPC Channel for communication with the daemon
 pub struct IpcChannel {
     stream: Option<UnixStream>,
@@ -140,14 +158,7 @@ impl IpcChannel {
     /// Send a message
     pub fn send(&mut self, message: ProtocolMessage) -> Result<(), std::io::Error> {
         if let Some(stream) = &mut self.stream {
-            let bytes = message.to_bytes();
-            // First send the length (4 bytes, big-endian)
-            let len = (bytes.len() as u32).to_be_bytes();
-            stream.write_all(&len)?;
-            // Then send the message
-            stream.write_all(&bytes)?;
-            stream.flush()?;
-            Ok(())
+            write_framed(stream, &message.to_bytes())
         } else {
             Err(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
@@ -159,15 +170,7 @@ impl IpcChannel {
     /// Receive a message (blocking)
     pub fn recv(&mut self) -> Result<ProtocolMessage, std::io::Error> {
         if let Some(stream) = &mut self.stream {
-            // First read the length (4 bytes, big-endian)
-            let mut len_buf = [0u8; 4];
-            stream.read_exact(&mut len_buf)?;
-            let len = u32::from_be_bytes(len_buf) as usize;
-
-            // Then read the message
-            let mut buf = vec![0u8; len];
-            stream.read_exact(&mut buf)?;
-
+            let buf = read_framed(stream)?;
             ProtocolMessage::from_bytes(&buf).ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid message")
             })

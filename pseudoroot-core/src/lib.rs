@@ -10,51 +10,11 @@ pub mod shm_client;
 pub mod shm_map;
 pub mod state;
 
-pub use state::{FakeInode, FakeRootState, FileOwnership, InodeKey, UidGidMap};
+pub use state::{FakeInode, FakeRootState, InodeKey};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_file_ownership_default() {
-        let ownership = FileOwnership::default();
-        assert_eq!(ownership.uid, 0);
-        assert_eq!(ownership.gid, 0);
-    }
-
-    #[test]
-    fn test_file_ownership_new() {
-        let ownership = FileOwnership::new(1000, 2000);
-        assert_eq!(ownership.uid, 1000);
-        assert_eq!(ownership.gid, 2000);
-    }
-
-    #[test]
-    fn test_uid_gid_map_default() {
-        let map = UidGidMap::default();
-        // Root should always map to root
-        assert_eq!(map.get_uid(0), Some(0));
-        assert_eq!(map.get_gid(0), Some(0));
-        assert_eq!(map.get_real_uid(0), Some(0));
-        assert_eq!(map.get_real_gid(0), Some(0));
-    }
-
-    #[test]
-    fn test_uid_gid_map_add_uid() {
-        let mut map = UidGidMap::default();
-        map.add_uid(1000, 1001);
-        assert_eq!(map.get_uid(1000), Some(1001));
-        assert_eq!(map.get_real_uid(1001), Some(1000));
-    }
-
-    #[test]
-    fn test_uid_gid_map_add_gid() {
-        let mut map = UidGidMap::default();
-        map.add_gid(2000, 2001);
-        assert_eq!(map.get_gid(2000), Some(2001));
-        assert_eq!(map.get_real_gid(2001), Some(2000));
-    }
 
     #[test]
     fn test_fake_root_state_new() {
@@ -72,15 +32,6 @@ mod tests {
     }
 
     #[test]
-    fn test_fake_root_state_inode_ownership() {
-        let state = FakeRootState::new();
-        let ownership = FileOwnership::new(3000, 4000);
-        let key = (1u64, 42u64);
-        state.set_inode_ownership(key, ownership);
-        assert_eq!(state.get_inode_ownership(key), Some(ownership));
-    }
-
-    #[test]
     fn test_fake_root_state_inode_mode() {
         let state = FakeRootState::new();
         let key = (1u64, 42u64);
@@ -94,40 +45,25 @@ mod tests {
     fn test_fake_root_state_upsert_chown() {
         let state = FakeRootState::new();
         state.upsert_chown((1, 2), 100, 200, 0, 0);
-        let ownership = state.get_inode_ownership((1, 2)).unwrap();
-        assert_eq!(ownership.uid, 100);
-        assert_eq!(ownership.gid, 200);
+        let inode = state.get_inode((1, 2)).unwrap();
+        assert_eq!(inode.uid, 100);
+        assert_eq!(inode.gid, 200);
         state.upsert_chown((1, 2), FakeRootState::ID_UNCHANGED, 7, 0, 0);
-        let ownership = state.get_inode_ownership((1, 2)).unwrap();
-        assert_eq!(ownership.uid, 100);
-        assert_eq!(ownership.gid, 7);
+        let inode = state.get_inode((1, 2)).unwrap();
+        assert_eq!(inode.uid, 100);
+        assert_eq!(inode.gid, 7);
     }
 
     #[test]
-    fn test_fake_root_state_remove_inode_ownership() {
+    fn test_fake_root_state_remove_inode() {
         let state = FakeRootState::new();
-        let ownership = FileOwnership::new(3000, 4000);
         let key = (1u64, 42u64);
-        state.set_inode_ownership(key, ownership);
-        assert_eq!(state.get_inode_ownership(key), Some(ownership));
+        let inode = FakeInode::new(3000, 4000);
+        state.set_inode(key, inode.clone());
+        assert_eq!(state.get_inode(key), Some(inode.clone()));
 
-        let removed = state.remove_inode_ownership(key);
-        assert_eq!(removed, Some(ownership));
-        assert_eq!(state.get_inode_ownership(key), None);
-    }
-
-    #[test]
-    fn test_uid_gid_map_multiple_mappings() {
-        let mut map = UidGidMap::default();
-        map.add_uid(1000, 1001);
-        map.add_uid(1002, 1003);
-        map.add_gid(2000, 2001);
-
-        assert_eq!(map.get_uid(1000), Some(1001));
-        assert_eq!(map.get_uid(1002), Some(1003));
-        assert_eq!(map.get_uid(9999), None);
-
-        assert_eq!(map.get_gid(2000), Some(2001));
-        assert_eq!(map.get_gid(9999), None);
+        let removed = state.remove_inode(key);
+        assert_eq!(removed, Some(inode));
+        assert_eq!(state.get_inode(key), None);
     }
 }

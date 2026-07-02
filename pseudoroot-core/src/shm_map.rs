@@ -41,6 +41,17 @@ const SLOT_LIVE: u32 = 1;
 /// would hide any later entry that hashed into the same bucket.
 const SLOT_TOMBSTONE: u32 = 2;
 
+/// Outcome of a linear probe through the slot table.
+enum Probe {
+    /// A live entry matching the key, at this slot index.
+    Found(u32),
+    /// No entry for the key; insert at this slot index.
+    Vacant(u32),
+    /// No entry for the key, and no empty or reusable slot within the probe
+    /// bound — the table is effectively full for this bucket.
+    Full,
+}
+
 #[repr(C, align(64))]
 struct Header {
     magic: u32,
@@ -263,27 +274,19 @@ impl ShmInodeMap {
     #[must_use]
     pub fn get_inode(&self, key: InodeKey) -> Option<FakeInode> {
         let (dev, ino) = key;
-        let mut idx = self.hash(dev, ino);
-        for _ in 0..self.slot_count {
-            let slot = self.slot(idx);
-            match slot.occupied.load(Ordering::Acquire) {
-                SLOT_EMPTY => return None,
-                SLOT_LIVE if slot.dev == dev && slot.ino == ino => {
-                    let mut inode = FakeInode::new(slot.uid, slot.gid);
-                    if slot.mode != 0 {
-                        inode.mode = Some(slot.mode);
-                    }
-                    if slot.rdev != 0 {
-                        inode.rdev = Some(slot.rdev);
-                    }
-                    inode.xattrs = self.read_xattrs(idx);
-                    return Some(inode);
-                }
-                _ => {}
-            }
-            idx = (idx + 1) % self.slot_count;
+        let Probe::Found(idx) = self.probe(dev, ino) else {
+            return None;
+        };
+        let slot = self.slot(idx);
+        let mut inode = FakeInode::new(slot.uid, slot.gid);
+        if slot.mode != 0 {
+            inode.mode = Some(slot.mode);
         }
-        None
+        if slot.rdev != 0 {
+            inode.rdev = Some(slot.rdev);
+        }
+        inode.xattrs = self.read_xattrs(idx);
+        Some(inode)
     }
 
     pub fn upsert_chown(
@@ -295,89 +298,67 @@ impl ShmInodeMap {
         default_gid: u32,
     ) {
         let (dev, ino) = key;
-        let mut idx = self.hash(dev, ino);
-        let mut reuse: Option<u32> = None;
-        for _ in 0..self.slot_count {
-            let slot = self.slot(idx);
-            match slot.occupied.load(Ordering::Acquire) {
-                SLOT_EMPTY => {
-                    let target_idx = reuse.unwrap_or(idx);
-                    let new_uid = if uid == ID_UNCHANGED {
-                        default_uid
-                    } else {
-                        uid
-                    };
-                    let new_gid = if gid == ID_UNCHANGED {
-                        default_gid
-                    } else {
-                        gid
-                    };
-                    // Clear any xattrs left behind by whatever previously
-                    // occupied this slot before publishing it as live.
-                    self.write_xattrs(target_idx, &HashMap::new());
-                    let target = self.slot(target_idx);
-                    target.dev = dev;
-                    target.ino = ino;
-                    target.uid = new_uid;
-                    target.gid = new_gid;
-                    target.mode = 0;
-                    target.rdev = 0;
-                    target.occupied.store(SLOT_LIVE, Ordering::Release);
-                    return;
+        match self.probe(dev, ino) {
+            Probe::Found(idx) => {
+                let slot = self.slot(idx);
+                if uid != ID_UNCHANGED {
+                    slot.uid = uid;
                 }
-                SLOT_LIVE if slot.dev == dev && slot.ino == ino => {
-                    if uid != ID_UNCHANGED {
-                        slot.uid = uid;
-                    }
-                    if gid != ID_UNCHANGED {
-                        slot.gid = gid;
-                    }
-                    return;
+                if gid != ID_UNCHANGED {
+                    slot.gid = gid;
                 }
-                SLOT_TOMBSTONE if reuse.is_none() => {
-                    reuse = Some(idx);
-                }
-                _ => {}
             }
-            idx = (idx + 1) % self.slot_count;
+            Probe::Vacant(idx) => {
+                let new_uid = if uid == ID_UNCHANGED {
+                    default_uid
+                } else {
+                    uid
+                };
+                let new_gid = if gid == ID_UNCHANGED {
+                    default_gid
+                } else {
+                    gid
+                };
+                // Clear any xattrs left behind by whatever previously
+                // occupied this slot before publishing it as live.
+                self.write_xattrs(idx, &HashMap::new());
+                let target = self.slot(idx);
+                target.dev = dev;
+                target.ino = ino;
+                target.uid = new_uid;
+                target.gid = new_gid;
+                target.mode = 0;
+                target.rdev = 0;
+                target.occupied.store(SLOT_LIVE, Ordering::Release);
+            }
+            Probe::Full => {}
         }
     }
 
     /// Insert or replace full inode metadata for `key`.
     pub fn upsert_inode(&self, key: InodeKey, inode: &FakeInode) {
         let (dev, ino) = key;
-        let mut idx = self.hash(dev, ino);
-        let mut reuse: Option<u32> = None;
-        for _ in 0..self.slot_count {
-            let slot = self.slot(idx);
-            match slot.occupied.load(Ordering::Acquire) {
-                SLOT_EMPTY => {
-                    let target_idx = reuse.unwrap_or(idx);
-                    self.write_xattrs(target_idx, &inode.xattrs);
-                    let target = self.slot(target_idx);
-                    target.dev = dev;
-                    target.ino = ino;
-                    target.uid = inode.uid;
-                    target.gid = inode.gid;
-                    target.mode = inode.mode.unwrap_or(0);
-                    target.rdev = inode.rdev.unwrap_or(0);
-                    target.occupied.store(SLOT_LIVE, Ordering::Release);
-                    return;
-                }
-                SLOT_LIVE if slot.dev == dev && slot.ino == ino => {
-                    slot.uid = inode.uid;
-                    slot.gid = inode.gid;
-                    slot.mode = inode.mode.unwrap_or(0);
-                    slot.rdev = inode.rdev.unwrap_or(0);
-                    self.write_xattrs(idx, &inode.xattrs);
-                    return;
-                }
-                SLOT_TOMBSTONE if reuse.is_none() => {
-                    reuse = Some(idx);
-                }
-                _ => {}
+        match self.probe(dev, ino) {
+            Probe::Found(idx) => {
+                let slot = self.slot(idx);
+                slot.uid = inode.uid;
+                slot.gid = inode.gid;
+                slot.mode = inode.mode.unwrap_or(0);
+                slot.rdev = inode.rdev.unwrap_or(0);
+                self.write_xattrs(idx, &inode.xattrs);
             }
-            idx = (idx + 1) % self.slot_count;
+            Probe::Vacant(idx) => {
+                self.write_xattrs(idx, &inode.xattrs);
+                let target = self.slot(idx);
+                target.dev = dev;
+                target.ino = ino;
+                target.uid = inode.uid;
+                target.gid = inode.gid;
+                target.mode = inode.mode.unwrap_or(0);
+                target.rdev = inode.rdev.unwrap_or(0);
+                target.occupied.store(SLOT_LIVE, Ordering::Release);
+            }
+            Probe::Full => {}
         }
     }
 
@@ -389,21 +370,35 @@ impl ShmInodeMap {
     /// [`Self::upsert_inode`] treat tombstones as reusable on insert.
     pub fn remove_inode(&self, key: InodeKey) -> bool {
         let (dev, ino) = key;
+        let Probe::Found(idx) = self.probe(dev, ino) else {
+            return false;
+        };
+        self.write_xattrs(idx, &HashMap::new());
+        self.slot(idx)
+            .occupied
+            .store(SLOT_TOMBSTONE, Ordering::Release);
+        true
+    }
+
+    /// Walk the linear probe sequence for `(dev, ino)`, stopping at a live
+    /// match, the first empty slot (remembering the earliest tombstone seen
+    /// along the way as the preferred insertion point), or after
+    /// `slot_count` steps if the table has no room left for this key.
+    #[inline]
+    fn probe(&self, dev: u64, ino: u64) -> Probe {
         let mut idx = self.hash(dev, ino);
+        let mut reuse: Option<u32> = None;
         for _ in 0..self.slot_count {
             let slot = self.slot(idx);
             match slot.occupied.load(Ordering::Acquire) {
-                SLOT_EMPTY => return false,
-                SLOT_LIVE if slot.dev == dev && slot.ino == ino => {
-                    self.write_xattrs(idx, &HashMap::new());
-                    slot.occupied.store(SLOT_TOMBSTONE, Ordering::Release);
-                    return true;
-                }
+                SLOT_EMPTY => return Probe::Vacant(reuse.unwrap_or(idx)),
+                SLOT_LIVE if slot.dev == dev && slot.ino == ino => return Probe::Found(idx),
+                SLOT_TOMBSTONE if reuse.is_none() => reuse = Some(idx),
                 _ => {}
             }
             idx = (idx + 1) % self.slot_count;
         }
-        false
+        Probe::Full
     }
 
     /// Offset of the xattr page region, right after the slot table.

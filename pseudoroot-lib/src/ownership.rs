@@ -255,6 +255,46 @@ fn record_chown_key(key: InodeKey, uid: u32, gid: u32) {
     }
 }
 
+/// How to resolve a `libc::stat` for a syscall being intercepted, and (for
+/// path-based sources) whether to follow a trailing symlink.
+#[derive(Clone, Copy)]
+enum StatSource {
+    Path {
+        path: *const c_char,
+        nofollow: bool,
+    },
+    Fd(i32),
+    At {
+        dirfd: i32,
+        path: *const c_char,
+        at_flags: i32,
+    },
+}
+
+impl StatSource {
+    fn stat(&self) -> Result<libc::stat, i32> {
+        match *self {
+            Self::Path {
+                path,
+                nofollow: true,
+            } => lstat_path(path),
+            Self::Path {
+                path,
+                nofollow: false,
+            } => stat_path(path),
+            Self::Fd(fd) => fstat_fd(fd),
+            Self::At {
+                dirfd,
+                path,
+                at_flags,
+            } => {
+                let flags = resolve_stat_flags(dirfd, path, at_flags);
+                stat_at(dirfd, path, flags)
+            }
+        }
+    }
+}
+
 /// Compose a full mode value: keep the real type bits, override the permission bits.
 #[inline]
 #[must_use]
@@ -282,6 +322,17 @@ fn record_chmod_for_key(key: InodeKey, real_mode: libc::mode_t, req_mode: libc::
     });
 }
 
+fn record_chown(source: StatSource, uid: u32, gid: u32) -> i32 {
+    ensure_library_init();
+    match source.stat() {
+        Ok(st) => {
+            record_chown_key(key_from_stat(&st), uid, gid);
+            0
+        }
+        Err(errno) => errno,
+    }
+}
+
 pub(crate) fn record_chown_at(
     dirfd: i32,
     path: *const c_char,
@@ -289,66 +340,58 @@ pub(crate) fn record_chown_at(
     uid: u32,
     gid: u32,
 ) -> i32 {
-    ensure_library_init();
-    let flags = resolve_stat_flags(dirfd, path, at_flags);
-    match stat_at(dirfd, path, flags) {
-        Ok(st) => {
-            record_chown_key(key_from_stat(&st), uid, gid);
-            0
-        }
-        Err(errno) => errno,
-    }
+    record_chown(
+        StatSource::At {
+            dirfd,
+            path,
+            at_flags,
+        },
+        uid,
+        gid,
+    )
 }
 
 pub(crate) fn record_chown_path(path: *const c_char, nofollow: bool, uid: u32, gid: u32) -> i32 {
-    ensure_library_init();
-    let result = if nofollow {
-        lstat_path(path)
-    } else {
-        stat_path(path)
-    };
-    match result {
-        Ok(st) => {
-            record_chown_key(key_from_stat(&st), uid, gid);
-            0
-        }
-        Err(errno) => errno,
-    }
+    record_chown(StatSource::Path { path, nofollow }, uid, gid)
 }
 
 pub(crate) fn record_chown_fd(fd: i32, uid: u32, gid: u32) -> i32 {
+    record_chown(StatSource::Fd(fd), uid, gid)
+}
+
+fn record_chmod(source: StatSource, mode: libc::mode_t) -> i32 {
     ensure_library_init();
-    match fstat_fd(fd) {
+    match source.stat() {
         Ok(st) => {
-            record_chown_key(key_from_stat(&st), uid, gid);
-            0
+            let key = key_from_stat(&st);
+            record_chmod_for_key(key, st.st_mode, mode);
+            let real = match source {
+                StatSource::Path { path, .. } => unsafe { crate::platform::real_chmod(path, mode) },
+                StatSource::Fd(fd) => unsafe { crate::platform::real_fchmod(fd, mode) },
+                StatSource::At {
+                    dirfd,
+                    path,
+                    at_flags,
+                } => unsafe { crate::platform::real_fchmodat(dirfd, path, mode, at_flags) },
+            };
+            zero_on_err(real)
         }
         Err(errno) => errno,
     }
 }
 
 pub(crate) fn record_chmod_path(path: *const c_char, mode: libc::mode_t) -> i32 {
-    ensure_library_init();
-    match stat_path(path) {
-        Ok(st) => {
-            let key = key_from_stat(&st);
-            record_chmod_for_key(key, st.st_mode, mode);
-            zero_on_err(unsafe { crate::platform::real_chmod(path, mode) })
-        }
-        Err(errno) => errno,
-    }
+    record_chmod(
+        StatSource::Path {
+            path,
+            nofollow: false,
+        },
+        mode,
+    )
 }
 
 pub(crate) fn record_chmod_fd(fd: i32, mode: libc::mode_t) -> i32 {
-    ensure_library_init();
-    match fstat_fd(fd) {
-        Ok(st) => {
-            let key = key_from_stat(&st);
-            record_chmod_for_key(key, st.st_mode, mode);
-            zero_on_err(unsafe { crate::platform::real_fchmod(fd, mode) })
-        }
-        Err(errno) => errno,
-    }
+    record_chmod(StatSource::Fd(fd), mode)
 }
 
 pub(crate) fn record_chmod_at(
@@ -357,16 +400,14 @@ pub(crate) fn record_chmod_at(
     mode: libc::mode_t,
     at_flags: i32,
 ) -> i32 {
-    ensure_library_init();
-    let flags = resolve_stat_flags(dirfd, path, at_flags);
-    match stat_at(dirfd, path, flags) {
-        Ok(st) => {
-            let key = key_from_stat(&st);
-            record_chmod_for_key(key, st.st_mode, mode);
-            zero_on_err(unsafe { crate::platform::real_fchmodat(dirfd, path, mode, at_flags) })
-        }
-        Err(errno) => errno,
-    }
+    record_chmod(
+        StatSource::At {
+            dirfd,
+            path,
+            at_flags,
+        },
+        mode,
+    )
 }
 
 fn maybe_remove_inode(key: InodeKey, nlink: u64) {
@@ -693,23 +734,17 @@ fn remove_xattr_for_key(key: InodeKey, name: &str) {
     });
 }
 
-pub(crate) fn fake_setxattr_path(
-    path: *const c_char,
+fn fake_setxattr(
+    source: StatSource,
     name: *const c_char,
     value: *const std::ffi::c_void,
     size: libc::size_t,
-    nofollow: bool,
 ) -> i32 {
     ensure_library_init();
     let Some(name) = read_cstr(name) else {
         return -libc::EINVAL;
     };
-    let result = if nofollow {
-        lstat_path(path)
-    } else {
-        stat_path(path)
-    };
-    match result {
+    match source.stat() {
         Ok(st) => {
             let key = key_from_stat(&st);
             let value = read_xattr_value(value, size);
@@ -720,25 +755,69 @@ pub(crate) fn fake_setxattr_path(
     }
 }
 
+pub(crate) fn fake_setxattr_path(
+    path: *const c_char,
+    name: *const c_char,
+    value: *const std::ffi::c_void,
+    size: libc::size_t,
+    nofollow: bool,
+) -> i32 {
+    fake_setxattr(StatSource::Path { path, nofollow }, name, value, size)
+}
+
 pub(crate) fn fake_setxattr_fd(
     fd: i32,
     name: *const c_char,
     value: *const std::ffi::c_void,
     size: libc::size_t,
 ) -> i32 {
+    fake_setxattr(StatSource::Fd(fd), name, value, size)
+}
+
+/// Dispatch to the real `getxattr` family matching `source`.
+///
+/// # Panics
+/// Panics if `source` is a [`StatSource::At`] — xattr syscalls have no
+/// `*at`-family variant, so callers in this module never construct one here.
+fn real_getxattr_for(
+    source: StatSource,
+    name: *const c_char,
+    value: *mut std::ffi::c_void,
+    size: libc::size_t,
+) -> i32 {
+    match source {
+        StatSource::Path {
+            path,
+            nofollow: true,
+        } => unsafe { crate::platform::real_lgetxattr(path, name, value, size) },
+        StatSource::Path {
+            path,
+            nofollow: false,
+        } => unsafe { crate::platform::real_getxattr(path, name, value, size) },
+        StatSource::Fd(fd) => unsafe { crate::platform::real_fgetxattr(fd, name, value, size) },
+        StatSource::At { .. } => unreachable!("xattr sources are never StatSource::At"),
+    }
+}
+
+fn fake_getxattr(
+    source: StatSource,
+    name: *const c_char,
+    value: *mut std::ffi::c_void,
+    size: libc::size_t,
+) -> i32 {
     ensure_library_init();
-    let Some(name) = read_cstr(name) else {
+    let Some(name_key) = read_cstr(name) else {
         return -libc::EINVAL;
     };
-    match fstat_fd(fd) {
-        Ok(st) => {
-            let key = key_from_stat(&st);
-            let value = read_xattr_value(value, size);
-            record_xattr_for_key(key, name, value);
-            0
+    if let Ok(st) = source.stat() {
+        let key = key_from_stat(&st);
+        if let Some(inode) = get_inode(key) {
+            if let Some(stored) = inode.xattrs.get(&name_key) {
+                return write_xattr_value(stored, value, size);
+            }
         }
-        Err(errno) => errno,
     }
+    real_getxattr_for(source, name, value, size)
 }
 
 pub(crate) fn fake_getxattr_path(
@@ -748,28 +827,7 @@ pub(crate) fn fake_getxattr_path(
     size: libc::size_t,
     nofollow: bool,
 ) -> i32 {
-    ensure_library_init();
-    let Some(name_key) = read_cstr(name) else {
-        return -libc::EINVAL;
-    };
-    let result = if nofollow {
-        lstat_path(path)
-    } else {
-        stat_path(path)
-    };
-    if let Ok(st) = result {
-        let key = key_from_stat(&st);
-        if let Some(inode) = get_inode(key) {
-            if let Some(stored) = inode.xattrs.get(&name_key) {
-                return write_xattr_value(stored, value, size);
-            }
-        }
-    }
-    if nofollow {
-        unsafe { crate::platform::real_lgetxattr(path, name, value, size) }
-    } else {
-        unsafe { crate::platform::real_getxattr(path, name, value, size) }
-    }
+    fake_getxattr(StatSource::Path { path, nofollow }, name, value, size)
 }
 
 pub(crate) fn fake_getxattr_fd(
@@ -778,19 +836,55 @@ pub(crate) fn fake_getxattr_fd(
     value: *mut std::ffi::c_void,
     size: libc::size_t,
 ) -> i32 {
-    ensure_library_init();
-    let Some(name_key) = read_cstr(name) else {
-        return -libc::EINVAL;
-    };
-    if let Ok(st) = fstat_fd(fd) {
-        let key = key_from_stat(&st);
-        if let Some(inode) = get_inode(key) {
-            if let Some(stored) = inode.xattrs.get(&name_key) {
-                return write_xattr_value(stored, value, size);
-            }
-        }
+    fake_getxattr(StatSource::Fd(fd), name, value, size)
+}
+
+/// Dispatch to the real `listxattr` family matching `source`.
+///
+/// # Panics
+/// Panics if `source` is a [`StatSource::At`] — xattr syscalls have no
+/// `*at`-family variant, so callers in this module never construct one here.
+fn real_listxattr_for(source: StatSource, list: *mut c_char, size: libc::size_t) -> i32 {
+    match source {
+        StatSource::Path {
+            path,
+            nofollow: true,
+        } => unsafe { crate::platform::real_llistxattr(path, list, size) },
+        StatSource::Path {
+            path,
+            nofollow: false,
+        } => unsafe { crate::platform::real_listxattr(path, list, size) },
+        StatSource::Fd(fd) => unsafe { crate::platform::real_flistxattr(fd, list, size) },
+        StatSource::At { .. } => unreachable!("xattr sources are never StatSource::At"),
     }
-    unsafe { crate::platform::real_fgetxattr(fd, name, value, size) }
+}
+
+fn fake_listxattr(source: StatSource, list: *mut c_char, size: libc::size_t) -> i32 {
+    ensure_library_init();
+    let extra = if let Ok(st) = source.stat() {
+        get_inode(key_from_stat(&st))
+            .map(|inode| inode.xattrs.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let real_ret = real_listxattr_for(source, list, size);
+    if extra.is_empty() {
+        return real_ret;
+    }
+
+    let real_list = if real_ret > 0 && !list.is_null() {
+        let mut buf = vec![0u8; real_ret as usize];
+        unsafe {
+            std::ptr::copy_nonoverlapping(list.cast::<u8>(), buf.as_mut_ptr(), real_ret as usize);
+        }
+        buf
+    } else {
+        Vec::new()
+    };
+    let merged = merge_xattr_lists(&real_list, &extra);
+    write_xattr_list(&merged, list, size)
 }
 
 pub(crate) fn fake_listxattr_path(
@@ -799,67 +893,25 @@ pub(crate) fn fake_listxattr_path(
     size: libc::size_t,
     nofollow: bool,
 ) -> i32 {
-    ensure_library_init();
-    let extra = if let Ok(st) = if nofollow {
-        lstat_path(path)
-    } else {
-        stat_path(path)
-    } {
-        get_inode(key_from_stat(&st))
-            .map(|inode| inode.xattrs.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    let real_ret = if nofollow {
-        unsafe { crate::platform::real_llistxattr(path, list, size) }
-    } else {
-        unsafe { crate::platform::real_listxattr(path, list, size) }
-    };
-    if extra.is_empty() {
-        return real_ret;
-    }
-
-    let real_list = if real_ret > 0 && !list.is_null() {
-        let mut buf = vec![0u8; real_ret as usize];
-        unsafe {
-            std::ptr::copy_nonoverlapping(list.cast::<u8>(), buf.as_mut_ptr(), real_ret as usize);
-        }
-        buf
-    } else {
-        Vec::new()
-    };
-    let merged = merge_xattr_lists(&real_list, &extra);
-    write_xattr_list(&merged, list, size)
+    fake_listxattr(StatSource::Path { path, nofollow }, list, size)
 }
 
 pub(crate) fn fake_listxattr_fd(fd: i32, list: *mut c_char, size: libc::size_t) -> i32 {
+    fake_listxattr(StatSource::Fd(fd), list, size)
+}
+
+fn fake_removexattr(source: StatSource, name: *const c_char) -> i32 {
     ensure_library_init();
-    let extra = if let Ok(st) = fstat_fd(fd) {
-        get_inode(key_from_stat(&st))
-            .map(|inode| inode.xattrs.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
+    let Some(name) = read_cstr(name) else {
+        return -libc::EINVAL;
     };
-
-    let real_ret = unsafe { crate::platform::real_flistxattr(fd, list, size) };
-    if extra.is_empty() {
-        return real_ret;
-    }
-
-    let real_list = if real_ret > 0 && !list.is_null() {
-        let mut buf = vec![0u8; real_ret as usize];
-        unsafe {
-            std::ptr::copy_nonoverlapping(list.cast::<u8>(), buf.as_mut_ptr(), real_ret as usize);
+    match source.stat() {
+        Ok(st) => {
+            remove_xattr_for_key(key_from_stat(&st), &name);
+            0
         }
-        buf
-    } else {
-        Vec::new()
-    };
-    let merged = merge_xattr_lists(&real_list, &extra);
-    write_xattr_list(&merged, list, size)
+        Err(errno) => errno,
+    }
 }
 
 pub(crate) fn fake_removexattr_path(
@@ -867,36 +919,11 @@ pub(crate) fn fake_removexattr_path(
     name: *const c_char,
     nofollow: bool,
 ) -> i32 {
-    ensure_library_init();
-    let Some(name) = read_cstr(name) else {
-        return -libc::EINVAL;
-    };
-    let result = if nofollow {
-        lstat_path(path)
-    } else {
-        stat_path(path)
-    };
-    match result {
-        Ok(st) => {
-            remove_xattr_for_key(key_from_stat(&st), &name);
-            0
-        }
-        Err(errno) => errno,
-    }
+    fake_removexattr(StatSource::Path { path, nofollow }, name)
 }
 
 pub(crate) fn fake_removexattr_fd(fd: i32, name: *const c_char) -> i32 {
-    ensure_library_init();
-    let Some(name) = read_cstr(name) else {
-        return -libc::EINVAL;
-    };
-    match fstat_fd(fd) {
-        Ok(st) => {
-            remove_xattr_for_key(key_from_stat(&st), &name);
-            0
-        }
-        Err(errno) => errno,
-    }
+    fake_removexattr(StatSource::Fd(fd), name)
 }
 
 #[cfg(test)]
@@ -904,13 +931,11 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::unnecessary_cast)]
     fn compose_mode_keeps_type_overrides_perms() {
-        // `mode_t` is u16 on macOS, so widen explicitly.
-        let real = u32::from(libc::S_IFREG) | 0o644;
-        assert_eq!(
-            compose_mode(real, 0o4755),
-            u32::from(libc::S_IFREG) | 0o4755
-        );
+        // `mode_t` is u16 on macOS, so widen explicitly (no-op on Linux).
+        let real = libc::S_IFREG as u32 | 0o644;
+        assert_eq!(compose_mode(real, 0o4755), libc::S_IFREG as u32 | 0o4755);
     }
 
     #[test]

@@ -72,87 +72,53 @@ pub fn get_daemon_channel() -> Option<&'static std::sync::Mutex<crate::protocol:
     DAEMON_CHANNEL.get()
 }
 
-/// Get current UID/GID from daemon
-pub fn daemon_get_current_uid_gid() -> Option<(u32, u32)> {
+/// Send an RPC to the daemon and return its response, or `None` if there's
+/// no live connection or the round-trip fails.
+fn daemon_request(message_type: MessageType, payload: Vec<u8>) -> Option<ProtocolMessage> {
     let channel = get_daemon_channel()?;
     let mut channel_guard = channel.lock().ok()?;
-    let message = ProtocolMessage::new(
-        MessageType::GetCurrentUidGid,
-        vec![],
-        crate::protocol::next_request_id(),
-    );
+    let message = ProtocolMessage::new(message_type, payload, crate::protocol::next_request_id());
+    channel_guard.request(message).ok()
+}
 
-    match channel_guard.request(message) {
-        Ok(response) => {
-            if response.message_type == MessageType::Response {
-                UidGidPayload::from_payload(&response.payload).map(|p| (p.uid, p.gid))
-            } else {
-                None
-            }
-        }
-        Err(_) => None,
+/// An RPC that reports success as "not an error response".
+fn daemon_request_ok(message_type: MessageType, payload: Vec<u8>) -> bool {
+    daemon_request(message_type, payload).is_some_and(|r| r.message_type != MessageType::Error)
+}
+
+/// Get current UID/GID from daemon
+pub fn daemon_get_current_uid_gid() -> Option<(u32, u32)> {
+    let response = daemon_request(MessageType::GetCurrentUidGid, vec![])?;
+    if response.message_type != MessageType::Response {
+        return None;
     }
+    UidGidPayload::from_payload(&response.payload).map(|p| (p.uid, p.gid))
 }
 
 /// Set current UID/GID in daemon
 pub fn daemon_set_current_uid_gid(uid: u32, gid: u32) -> bool {
-    let channel = match get_daemon_channel() {
-        Some(ch) => ch,
-        None => return false,
-    };
-    let mut channel_guard = match channel.lock() {
-        Ok(g) => g,
-        Err(_) => return false,
-    };
     let payload = UidGidPayload { uid, gid };
-    let message = ProtocolMessage::new(
-        MessageType::SetCurrentUidGid,
-        payload.to_payload(),
-        crate::protocol::next_request_id(),
-    );
-
-    match channel_guard.request(message) {
-        Ok(response) => response.message_type != MessageType::Error,
-        Err(_) => false,
-    }
+    daemon_request_ok(MessageType::SetCurrentUidGid, payload.to_payload())
 }
 
 /// Get inode state from daemon
 pub fn daemon_get_inode(key: InodeKey) -> Option<FakeInode> {
-    let channel = get_daemon_channel()?;
-    let mut channel_guard = channel.lock().ok()?;
     let payload = InodeKeyPayload {
         dev: key.0,
         ino: key.1,
     };
-    let message = ProtocolMessage::new(
-        MessageType::GetOwnership,
-        payload.to_payload(),
-        crate::protocol::next_request_id(),
-    );
-
-    match channel_guard.request(message) {
-        Ok(response) => {
-            if response.message_type == MessageType::Response {
-                InodeStateResult::from_payload(&response.payload).and_then(|r| {
-                    if r.found {
-                        Some(FakeInode {
-                            uid: r.uid,
-                            gid: r.gid,
-                            mode: r.mode,
-                            rdev: r.rdev,
-                            xattrs: r.xattrs,
-                        })
-                    } else {
-                        None
-                    }
-                })
-            } else {
-                None
-            }
-        }
-        Err(_) => None,
+    let response = daemon_request(MessageType::GetOwnership, payload.to_payload())?;
+    if response.message_type != MessageType::Response {
+        return None;
     }
+    let r = InodeStateResult::from_payload(&response.payload)?;
+    r.found.then_some(FakeInode {
+        uid: r.uid,
+        gid: r.gid,
+        mode: r.mode,
+        rdev: r.rdev,
+        xattrs: r.xattrs,
+    })
 }
 
 /// Merge a chown into daemon state in one RPC.
@@ -163,14 +129,6 @@ pub fn daemon_upsert_chown(
     default_uid: u32,
     default_gid: u32,
 ) -> bool {
-    let channel = match get_daemon_channel() {
-        Some(ch) => ch,
-        None => return false,
-    };
-    let mut channel_guard = match channel.lock() {
-        Ok(g) => g,
-        Err(_) => return false,
-    };
     let payload = ChownPayload {
         dev: key.0,
         ino: key.1,
@@ -179,28 +137,11 @@ pub fn daemon_upsert_chown(
         default_uid,
         default_gid,
     };
-    let message = ProtocolMessage::new(
-        MessageType::UpsertChown,
-        payload.to_payload(),
-        crate::protocol::next_request_id(),
-    );
-
-    match channel_guard.request(message) {
-        Ok(response) => response.message_type != MessageType::Error,
-        Err(_) => false,
-    }
+    daemon_request_ok(MessageType::UpsertChown, payload.to_payload())
 }
 
 /// Set inode state in daemon
 pub fn daemon_set_inode(key: InodeKey, inode: &FakeInode) -> bool {
-    let channel = match get_daemon_channel() {
-        Some(ch) => ch,
-        None => return false,
-    };
-    let mut channel_guard = match channel.lock() {
-        Ok(g) => g,
-        Err(_) => return false,
-    };
     let payload = InodeStatePayload {
         dev: key.0,
         ino: key.1,
@@ -210,65 +151,22 @@ pub fn daemon_set_inode(key: InodeKey, inode: &FakeInode) -> bool {
         rdev: inode.rdev,
         xattrs: inode.xattrs.clone(),
     };
-    let message = ProtocolMessage::new(
-        MessageType::RegisterOwnership,
-        payload.to_payload(),
-        crate::protocol::next_request_id(),
-    );
-
-    match channel_guard.request(message) {
-        Ok(response) => response.message_type != MessageType::Error,
-        Err(_) => false,
-    }
+    daemon_request_ok(MessageType::RegisterOwnership, payload.to_payload())
 }
 
 /// Remove inode state from daemon
 pub fn daemon_remove_inode(key: InodeKey) -> bool {
-    let channel = match get_daemon_channel() {
-        Some(ch) => ch,
-        None => return false,
-    };
-    let mut channel_guard = match channel.lock() {
-        Ok(g) => g,
-        Err(_) => return false,
-    };
     let payload = InodeKeyPayload {
         dev: key.0,
         ino: key.1,
     };
-    let message = ProtocolMessage::new(
-        MessageType::RemoveOwnership,
-        payload.to_payload(),
-        crate::protocol::next_request_id(),
-    );
-
-    match channel_guard.request(message) {
-        Ok(response) => response.message_type != MessageType::Error,
-        Err(_) => false,
-    }
+    daemon_request_ok(MessageType::RemoveOwnership, payload.to_payload())
 }
 
 /// Initialize daemon with UID/GID
 pub fn daemon_init(uid: u32, gid: u32) -> bool {
-    let channel = match get_daemon_channel() {
-        Some(ch) => ch,
-        None => return false,
-    };
-    let mut channel_guard = match channel.lock() {
-        Ok(g) => g,
-        Err(_) => return false,
-    };
     let payload = UidGidPayload { uid, gid };
-    let message = ProtocolMessage::new(
-        MessageType::Init,
-        payload.to_payload(),
-        crate::protocol::next_request_id(),
-    );
-
-    match channel_guard.request(message) {
-        Ok(response) => response.message_type != MessageType::Error,
-        Err(_) => false,
-    }
+    daemon_request_ok(MessageType::Init, payload.to_payload())
 }
 
 #[cfg(test)]

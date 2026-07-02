@@ -3,7 +3,7 @@
 //! Installed as `pseudoroot` (main) and `pdr` (short). Uses the same
 //! [`pseudoroot::FakerootCommandExt`] API as programmatic consumers.
 
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use pseudoroot::FakerootCommandExt;
 use pseudoroot_core::protocol::{
     next_request_id, IpcChannel, MessageType, ProtocolMessage, DEFAULT_SOCKET_PATH,
@@ -57,13 +57,9 @@ impl CliName {
     }
 }
 
-/// Run commands with fake root privileges.
-#[derive(Parser, Debug)]
-#[command(author = "Luca Barbato <lu_zero@gentoo.org>")]
-#[command(version = "0.1.0")]
-#[command(about = "Run commands with fake root privileges", long_about = None)]
-#[command(subcommand_negates_reqs = true)]
-struct Cli {
+/// Fake-identity flags shared by `pdr` (top-level) and `pseudoroot run`.
+#[derive(Args, Debug)]
+struct RunArgs {
     /// Fake UID to use when running a command (default: 0 = root)
     #[arg(long, default_value = "0")]
     uid: u32,
@@ -79,6 +75,17 @@ struct Cli {
     /// Daemon socket path (default: /tmp/pseudoroot.sock)
     #[arg(long)]
     socket_path: Option<String>,
+}
+
+/// Run commands with fake root privileges.
+#[derive(Parser, Debug)]
+#[command(author = "Luca Barbato <lu_zero@gentoo.org>")]
+#[command(version = "0.1.0")]
+#[command(about = "Run commands with fake root privileges", long_about = None)]
+#[command(subcommand_negates_reqs = true)]
+struct Cli {
+    #[command(flatten)]
+    run: RunArgs,
 
     #[command(subcommand)]
     action: Option<Commands>,
@@ -96,21 +103,8 @@ enum Commands {
         #[arg(allow_hyphen_values = true)]
         command: Vec<String>,
 
-        /// Attach to an existing pdrd instead of starting a per-invocation session
-        #[arg(long)]
-        daemon: bool,
-
-        /// Daemon socket path (default: /tmp/pseudoroot.sock)
-        #[arg(long)]
-        socket_path: Option<String>,
-
-        /// Fake UID to use (default: 0 = root)
-        #[arg(long, default_value = "0")]
-        uid: u32,
-
-        /// Fake GID to use (default: 0 = root)
-        #[arg(long, default_value = "0")]
-        gid: u32,
+        #[command(flatten)]
+        run: RunArgs,
     },
 
     /// Start the pseudoroot daemon for persistent state
@@ -173,13 +167,9 @@ fn main() {
     let parsed = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     match parsed.action {
-        Some(Commands::Run {
-            command,
-            daemon,
-            socket_path,
-            uid,
-            gid,
-        }) => run_command(cli, &command, daemon, socket_path, uid, gid),
+        Some(Commands::Run { command, run }) => {
+            run_command(cli, &command, run.daemon, run.socket_path, run.uid, run.gid)
+        }
 
         Some(Commands::Start {
             socket_path,
@@ -198,10 +188,10 @@ fn main() {
         None if cli.is_short() => run_command(
             cli,
             &parsed.command,
-            parsed.daemon,
-            parsed.socket_path,
-            parsed.uid,
-            parsed.gid,
+            parsed.run.daemon,
+            parsed.run.socket_path,
+            parsed.run.uid,
+            parsed.run.gid,
         ),
 
         None => {

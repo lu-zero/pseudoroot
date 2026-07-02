@@ -1,12 +1,12 @@
 //! In-process and standalone fake-root daemon server.
 
 use crate::protocol::{
-    ChownPayload, InodeKeyPayload, InodeStatePayload, InodeStateResult, IpcPayload, MessageType,
-    ProtocolMessage, UidGidPayload,
+    read_framed, write_framed, ChownPayload, InodeKeyPayload, InodeStatePayload, InodeStateResult,
+    IpcPayload, MessageType, ProtocolMessage, UidGidPayload,
 };
 use crate::state::{FakeInode, FakeRootState};
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -33,13 +33,7 @@ impl SessionDaemon {
     /// Returns an I/O error if the socket cannot be created or bound.
     pub fn start(socket_path: impl AsRef<Path>, uid: u32, gid: u32) -> io::Result<Self> {
         let socket_path = socket_path.as_ref().to_path_buf();
-        remove_socket(&socket_path);
-
-        let listener = UnixListener::bind(&socket_path)?;
-        listener.set_nonblocking(true)?;
-        if let Err(err) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666)) {
-            eprintln!("pseudoroot: warning: socket permissions: {err}");
-        }
+        let listener = bind_listener(&socket_path, "pseudoroot: warning: socket permissions")?;
 
         let state = new_shared_state(uid, gid);
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -94,14 +88,8 @@ pub fn run_blocking(
     cleanup: bool,
 ) -> io::Result<()> {
     let socket_path = socket_path.as_ref().to_path_buf();
-    remove_socket(&socket_path);
+    let listener = bind_listener(&socket_path, "Warning: Failed to set socket permissions")?;
 
-    let listener = UnixListener::bind(&socket_path)?;
-    if let Err(err) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666)) {
-        eprintln!("Warning: Failed to set socket permissions: {err}");
-    }
-
-    listener.set_nonblocking(true)?;
     let state = new_shared_state(uid, gid);
     let shutdown = Arc::new(AtomicBool::new(false));
     let result = accept_loop(listener, state, Arc::clone(&shutdown), verbose);
@@ -113,6 +101,18 @@ pub fn run_blocking(
         remove_socket(&socket_path);
     }
     result
+}
+
+/// Remove a stale socket, bind a fresh one, and set it non-blocking with
+/// world-writable permissions (clients run as arbitrary users).
+fn bind_listener(socket_path: &Path, permission_warning: &str) -> io::Result<UnixListener> {
+    remove_socket(socket_path);
+    let listener = UnixListener::bind(socket_path)?;
+    listener.set_nonblocking(true)?;
+    if let Err(err) = fs::set_permissions(socket_path, fs::Permissions::from_mode(0o666)) {
+        eprintln!("{permission_warning}: {err}");
+    }
+    Ok(listener)
 }
 
 /// Create concurrent shared state for a daemon session.
@@ -169,25 +169,15 @@ fn handle_client(
     }
 
     loop {
-        let mut len_buf = [0u8; 4];
-        match stream.read_exact(&mut len_buf) {
-            Ok(()) => {}
+        let buf = match read_framed(&mut stream) {
+            Ok(buf) => buf,
             Err(err) => {
                 if verbose {
                     eprintln!("Daemon: Client disconnected: {err}");
                 }
                 break;
             }
-        }
-
-        let len = u32::from_be_bytes(len_buf) as usize;
-        let mut buf = vec![0u8; len];
-        if let Err(err) = stream.read_exact(&mut buf) {
-            if verbose {
-                eprintln!("Daemon: Failed to read message: {err}");
-            }
-            break;
-        }
+        };
 
         let Some(message) = ProtocolMessage::from_bytes(&buf) else {
             if verbose {
@@ -323,11 +313,7 @@ fn dispatch_message(
 }
 
 fn send_message(stream: &mut UnixStream, message: &ProtocolMessage) -> io::Result<()> {
-    let bytes = message.to_bytes();
-    let len = (bytes.len() as u32).to_be_bytes();
-    stream.write_all(&len)?;
-    stream.write_all(&bytes)?;
-    stream.flush()
+    write_framed(stream, &message.to_bytes())
 }
 
 fn remove_socket(socket_path: &Path) {
