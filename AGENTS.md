@@ -27,7 +27,7 @@ Workspace crates live at the repository root:
 - `pseudoroot` — CLI binary that preloads the library and executes commands
 - `pseudoroot-tests` — integration and interposition tests
 
-Read the [design document](https://github.com/lu-zero/pseudoroot) for architecture reference.
+See [docs/architecture.md](docs/architecture.md) for architecture reference.
 
 ## Dependencies
 
