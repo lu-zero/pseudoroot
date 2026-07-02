@@ -157,7 +157,12 @@ fn test_chown_command() {
     cleanup_test_file(test_file);
 }
 
-/// Test stat command through pseudoroot
+/// Test stat command through pseudoroot.
+///
+/// Linux-only: uses GNU `stat --format` (BSD `stat` on macOS spells it `-f`),
+/// and `/usr/bin/stat` is SIP-restricted on macOS so it wouldn't be interposed
+/// anyway — `interposition::test_stat_interposition_with_c` covers stat there.
+#[cfg(target_os = "linux")]
 #[test]
 fn test_stat_command() {
     let test_file = "/tmp/pseudoroot_stat_test";

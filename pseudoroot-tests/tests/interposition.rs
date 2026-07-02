@@ -16,16 +16,25 @@ fn run_c_program_through_pseudoroot(
     gid: u32,
 ) -> Option<std::process::Output> {
     // Compile
-    let compile_output = Command::new("gcc")
+    let compile_output = match Command::new("gcc")
         .arg("-o")
         .arg(c_executable)
         .arg(c_source)
         .output()
-        .ok()?;
+    {
+        Ok(out) => out,
+        // No C compiler available: legitimately skip the test.
+        Err(_) => return None,
+    };
 
-    if !compile_output.status.success() {
-        return None;
-    }
+    // A compiler that's present but rejects the source is a real failure — a
+    // silent `None` here previously let `chown`/`chmod` "pass" without ever
+    // exercising interposition (clang errored on the missing `unistd.h`).
+    assert!(
+        compile_output.status.success(),
+        "failed to compile {c_source}:\n{}",
+        String::from_utf8_lossy(&compile_output.stderr)
+    );
 
     let lib = find_pseudoroot_lib();
     // SAFETY: interposition tests are separate processes; env is per-test.
@@ -147,6 +156,7 @@ fn test_chown_interposition_with_c() {
 
     let c_template = r##"#include <stdio.h>
 #include <sys/stat.h>
+#include <unistd.h>
 int main() {
     chown("XFILEX", 99999, 88888);
     struct stat buf;

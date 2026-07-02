@@ -2,6 +2,16 @@
 //!
 //! A shared `pdrd` backs these tests so inode state survives across separate
 //! `exec` calls within each shell script (`touch`, `chown`, `stat`, …).
+//!
+//! Linux-only, for two independent reasons:
+//! - macOS SIP strips `DYLD_INSERT_LIBRARIES` from Apple-signed binaries
+//!   (`/bin/sh` and every coreutil it spawns), so nothing here would actually
+//!   be interposed — the assertions would test the real filesystem, not the
+//!   fake overlay. Credential/stat interposition on macOS is covered instead
+//!   by the `api` and `interposition` suites via freshly built binaries.
+//! - the scripts use GNU coreutils syntax (`stat -c`, `install -o/-g`,
+//!   `tar --numeric-owner`) that BSD userland on macOS doesn't accept.
+#![cfg(target_os = "linux")]
 
 use pseudoroot_tests::run_pseudoroot_sh;
 use std::path::Path;
