@@ -14,8 +14,18 @@
 //! the real libc symbol lazily via [`real_fn!`] on first use after the
 //! library has finished bootstrapping, falling back to a raw syscall before
 //! that (or if the symbol turns out to be missing).
+//!
+//! Also hosts the `setxattr`/`getxattr`/`listxattr`/`removexattr` family of
+//! `#[no_mangle]` interposition hooks: unlike the OS-agnostic hooks in
+//! `lib.rs`, these match Linux's xattr ABI exactly (separate `l`-prefixed
+//! entry points for no-symlink-follow) and have no shared body with the
+//! Darwin equivalents in `macos.rs`.
 
 use crate::ownership;
+use crate::ownership::{
+    fake_getxattr_fd, fake_getxattr_path, fake_listxattr_fd, fake_listxattr_path,
+    fake_removexattr_fd, fake_removexattr_path, fake_setxattr_fd, fake_setxattr_path,
+};
 use std::os::raw::c_char;
 use std::sync::OnceLock;
 
@@ -161,3 +171,100 @@ real_fn!(real_llistxattr(path: *const c_char, list: *mut c_char, size: libc::siz
 
 real_fn!(real_flistxattr(fd: i32, list: *mut c_char, size: libc::size_t) -> i32, b"flistxattr\0",
     unsafe { libc::syscall(libc::SYS_flistxattr, fd, list, size) as i32 });
+
+// xattr interposition hooks — fake security.capability and other xattrs in
+// the inode table. Linux's xattr ABI matches these signatures exactly, with
+// separate `l`-prefixed entry points selecting no-symlink-follow behaviour
+// (unlike Darwin's single-function-plus-options-flag ABI; see `macos.rs`).
+#[unsafe(no_mangle)]
+pub extern "C" fn setxattr(
+    path: *const c_char,
+    name: *const c_char,
+    value: *const std::ffi::c_void,
+    size: libc::size_t,
+    _flags: i32,
+) -> i32 {
+    fake_setxattr_path(path, name, value, size, false)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lsetxattr(
+    path: *const c_char,
+    name: *const c_char,
+    value: *const std::ffi::c_void,
+    size: libc::size_t,
+    _flags: i32,
+) -> i32 {
+    fake_setxattr_path(path, name, value, size, true)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn fsetxattr(
+    fd: i32,
+    name: *const c_char,
+    value: *const std::ffi::c_void,
+    size: libc::size_t,
+    _flags: i32,
+) -> i32 {
+    fake_setxattr_fd(fd, name, value, size)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn getxattr(
+    path: *const c_char,
+    name: *const c_char,
+    value: *mut std::ffi::c_void,
+    size: libc::size_t,
+) -> i32 {
+    fake_getxattr_path(path, name, value, size, false)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lgetxattr(
+    path: *const c_char,
+    name: *const c_char,
+    value: *mut std::ffi::c_void,
+    size: libc::size_t,
+) -> i32 {
+    fake_getxattr_path(path, name, value, size, true)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn fgetxattr(
+    fd: i32,
+    name: *const c_char,
+    value: *mut std::ffi::c_void,
+    size: libc::size_t,
+) -> i32 {
+    fake_getxattr_fd(fd, name, value, size)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn listxattr(path: *const c_char, list: *mut c_char, size: libc::size_t) -> i32 {
+    fake_listxattr_path(path, list, size, false)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn llistxattr(path: *const c_char, list: *mut c_char, size: libc::size_t) -> i32 {
+    fake_listxattr_path(path, list, size, true)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn flistxattr(fd: i32, list: *mut c_char, size: libc::size_t) -> i32 {
+    fake_listxattr_fd(fd, list, size)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn removexattr(path: *const c_char, name: *const c_char) -> i32 {
+    fake_removexattr_path(path, name, false)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lremovexattr(path: *const c_char, name: *const c_char) -> i32 {
+    fake_removexattr_path(path, name, true)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn fremovexattr(fd: i32, name: *const c_char) -> i32 {
+    fake_removexattr_fd(fd, name)
+}
