@@ -406,7 +406,7 @@ pub(crate) fn record_chmod_at(
     )
 }
 
-fn maybe_remove_inode(key: InodeKey, nlink: u64) {
+fn maybe_remove_inode(key: InodeKey, nlink: libc::nlink_t) {
     if nlink <= 1 {
         remove_inode(key);
     }
@@ -424,10 +424,10 @@ pub(crate) fn prepare_rename_overwrite(
         if let Ok(old_st) = stat_at(olddirfd, oldpath, 0) {
             let old_key = key_from_stat(&old_st);
             if new_key != old_key {
-                maybe_remove_inode(new_key, new_st.st_nlink as u64);
+                maybe_remove_inode(new_key, new_st.st_nlink);
             }
         } else {
-            maybe_remove_inode(new_key, new_st.st_nlink as u64);
+            maybe_remove_inode(new_key, new_st.st_nlink);
         }
     }
 }
@@ -436,14 +436,14 @@ pub(crate) fn maybe_remove_inode_at(dirfd: i32, path: *const c_char, at_flags: i
     ensure_library_init();
     let stat_flags = resolve_stat_flags(dirfd, path, at_flags);
     if let Ok(st) = stat_at(dirfd, path, stat_flags) {
-        maybe_remove_inode(key_from_stat(&st), st.st_nlink as u64);
+        maybe_remove_inode(key_from_stat(&st), st.st_nlink);
     }
 }
 
 pub(crate) fn maybe_remove_inode_path(path: *const c_char) {
     ensure_library_init();
     if let Ok(st) = stat_path(path) {
-        maybe_remove_inode(key_from_stat(&st), st.st_nlink as u64);
+        maybe_remove_inode(key_from_stat(&st), st.st_nlink);
     }
 }
 
