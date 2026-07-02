@@ -86,11 +86,12 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
       # See the comment on the `test` job: pseudoroot-lib's cdylib artifact
-      # needs an explicit build under target/{debug,release} (llvm-cov's own
-      # --target-dir override for the instrumented test binaries doesn't
-      # help here, nor does pseudoroot's build.rs embed step — both build
-      # pseudoroot-lib into a different tree than what the test harness scans).
-      - run: cargo build -p pseudoroot-lib
+      # and the `pdr` binary have no Cargo dependents that the test harness
+      # follows, so they need an explicit build under target/{debug,release}
+      # (llvm-cov's own --target-dir override for the instrumented test
+      # binaries doesn't help here, nor does pseudoroot's build.rs embed step
+      # — both build into a different tree than what the harness scans).
+      - run: cargo build --workspace
       - run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
       - uses: codecov/codecov-action@v5
         with:
