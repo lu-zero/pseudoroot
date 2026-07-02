@@ -42,9 +42,8 @@ unsigned GNU tools (`ginstall`, `gmknod`, `gtar`, `/opt/homebrew/bin/bash`,
 …). The test suite and the macOS benchmark paths use freshly built or
 Homebrew binaries for exactly this reason.
 
-CI currently runs on Linux only; macOS is type-checked in CI
-(`cargo check --target x86_64-apple-darwin`) and the full suite passes on
-real Apple hardware locally.
+CI runs the full test suite and clippy on both `ubuntu-latest` and
+`macos-latest`.
 
 ## Interposed syscall families
 
