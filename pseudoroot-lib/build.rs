@@ -16,5 +16,13 @@ fn main() {
             "cargo:rustc-cdylib-link-arg=-Wl,--version-script={}",
             version_script.display()
         );
+        // The script only pins `statx` to the `GLIBC_2.28` version node; any
+        // symbol it does not list defaults to local and would be hidden. Re-export
+        // every other interposed entry at the base (unversioned) version so that
+        // versioned glibc lookups (e.g. `getuid@@GLIBC_2.2.6`) still resolve via
+        // LD_PRELOAD. `--export-dynamic` is used instead of an anonymous
+        // `{ global: *; };` catch-all node because LLD rejects an anonymous node
+        // mixed with a named one ("EOF expected"), while GNU ld accepts both.
+        println!("cargo:rustc-cdylib-link-arg=-Wl,--export-dynamic");
     }
 }
