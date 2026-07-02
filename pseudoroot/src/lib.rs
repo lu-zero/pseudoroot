@@ -61,6 +61,7 @@ pub trait FakerootCommandExt: sealed::Sealed {
     /// Configure stdio (`.stdout`, pipes, …) on the **returned** command, not before:
     /// `Command` exposes no way to read back its stdio, so any redirection set prior
     /// to this call cannot be carried over.
+    #[must_use = "fakeroot() builds a new Command; running the original executes unwrapped"]
     fn fakeroot(&self) -> Command;
 }
 
@@ -261,11 +262,10 @@ fn run_session(target_args: &[OsString]) -> Result<ExitStatus, String> {
 
     let mut cmd = Command::new(program);
     cmd.args(&target_args[1..]);
-    for (key, value) in env::vars_os() {
-        if key != SUPERVISE_VAR {
-            cmd.env(key, value);
-        }
-    }
+    // The rest of the environment is inherited; the marker must be *removed*,
+    // not merely left out of overrides, or a pseudoroot-linked target would
+    // re-enter supervision on its own argv.
+    cmd.env_remove(SUPERVISE_VAR);
     if let Some(shm) = &shm {
         // fd inheritance across exec is plain POSIX: clear CLOEXEC on the shm
         // descriptor and hand the child its number plus the map length. Works
@@ -371,7 +371,10 @@ fn env_u32(key: &str, default: u32) -> u32 {
 }
 
 fn ensure_default_env(cmd: &mut Command, key: &str, default: &str) {
-    if !command_has_env(cmd, key) {
+    // A value in the calling process's environment is inherited by the child;
+    // defaulting over it would clobber it (same lookup order as the preload
+    // merge above).
+    if !command_has_env(cmd, key) && env::var_os(key).is_none() {
         cmd.env(key, default);
     }
 }
