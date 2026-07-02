@@ -224,15 +224,15 @@ fn run_session(target_args: &[OsString]) -> Result<ExitStatus, String> {
         }
     }
     if let Some(shm) = &shm {
-        #[cfg(target_os = "linux")]
-        {
-            let fd = shm.inherited_fd();
-            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-            if flags >= 0 {
-                let _ = unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) };
-            }
+        // fd inheritance across exec is plain POSIX: clear CLOEXEC on the shm
+        // descriptor and hand the child its number plus the map length. Works
+        // the same on Linux (memfd) and macOS (shm_open'd object).
+        let fd = shm.inherited_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if flags >= 0 {
+            let _ = unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) };
         }
-        cmd.env(SHM_FD_ENV, shm.inherited_fd().to_string());
+        cmd.env(SHM_FD_ENV, fd.to_string());
         cmd.env(SHM_LEN_ENV, shm.map_len().to_string());
     } else if let Some(daemon) = &daemon {
         cmd.env(DAEMON_SOCKET_ENV, daemon.socket_path());
@@ -248,14 +248,14 @@ fn run_session(target_args: &[OsString]) -> Result<ExitStatus, String> {
 
 #[inline]
 fn session_shm_enabled() -> bool {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         match env::var(SESSION_SHM_ENV) {
             Ok(value) => value != "0" && !value.eq_ignore_ascii_case("false"),
             Err(_) => true,
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         false
     }

@@ -1,7 +1,11 @@
-//! Experimental shared-memory inode map for session mode (Linux).
+//! Experimental shared-memory inode map for session mode (Linux and macOS).
 //!
-//! A memfd-backed table is created by the session supervisor and inherited by
-//! preloaded children via `PSEUDOROOT_SHM_FD`, avoiding per-stat Unix socket RPC.
+//! An anonymous shared-memory table is created by the session supervisor and
+//! inherited by preloaded children via `PSEUDOROOT_SHM_FD`, avoiding per-stat
+//! Unix socket RPC. The backing fd is a `memfd` on Linux and an immediately
+//! `shm_unlink`ed POSIX shared-memory object on macOS; everything after fd
+//! creation (`ftruncate`/`mmap`/fd inheritance across `exec`) is plain POSIX
+//! and shared between the two.
 //!
 //! Layout: `Header | Slot[slot_count] | XattrPage[slot_count]`. Each slot has a
 //! dedicated `XATTR_PAGE_SIZE`-byte page (indexed the same way as its `Slot`)
@@ -62,18 +66,57 @@ pub struct ShmInodeMap {
     base: *mut u8,
     len: usize,
     slot_count: u32,
-    #[cfg(target_os = "linux")]
     _fd: std::os::fd::OwnedFd,
 }
 
+/// Create an anonymous shared-memory fd (CLOEXEC set) of no particular size.
+///
+/// Linux uses `memfd_create`; macOS has no memfd, so it opens an exclusive
+/// POSIX shared-memory object and `shm_unlink`s the name straight away — the
+/// returned fd (and any `mmap`/`dup` of it, including in `exec`ed children)
+/// keeps the object alive, so children inherit it by descriptor, not by name.
+#[cfg(target_os = "linux")]
+fn create_anon_shm_fd() -> io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::FromRawFd;
+    let fd = unsafe { libc::memfd_create(c"pseudoroot".as_ptr().cast(), 0) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) })
+}
+
+#[cfg(target_os = "macos")]
+fn create_anon_shm_fd() -> io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::FromRawFd;
+    use std::sync::atomic::AtomicU32;
+
+    // Darwin caps POSIX shm names at PSHMNAMLEN (31) bytes, so keep it short
+    // and unique per (pid, call) to avoid colliding with a concurrent session.
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let name = format!("/psr.{}.{seq}\0", std::process::id());
+    let fd = unsafe {
+        libc::shm_open(
+            name.as_ptr().cast(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
+            0o600 as libc::c_int,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // Drop the name now; the fd we return still refers to the live object.
+    unsafe { libc::shm_unlink(name.as_ptr().cast()) };
+    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) })
+}
+
 impl ShmInodeMap {
-    /// Create a new shared map and return it together with the memfd (CLOEXEC set).
+    /// Create a new shared map and return it together with its fd (CLOEXEC set).
     ///
     /// # Errors
-    /// Returns an error when memfd/mmap setup fails.
-    #[cfg(target_os = "linux")]
+    /// Returns an error when the shared-memory fd, `ftruncate`, or `mmap` fails.
     pub fn create(slot_count: u32, uid: u32, gid: u32) -> io::Result<Arc<Self>> {
-        use std::os::fd::{AsRawFd, FromRawFd, RawFd};
+        use std::os::fd::AsRawFd;
         use std::ptr;
 
         let slot_count = slot_count.next_power_of_two().max(1024);
@@ -90,11 +133,7 @@ impl ShmInodeMap {
             .and_then(|v| v.checked_add(xattr_region_size))
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "shm map too large"))?;
 
-        let fd = unsafe { libc::memfd_create(c"pseudoroot".as_ptr().cast(), 0) };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd as RawFd) };
+        let owned = create_anon_shm_fd()?;
         if unsafe { libc::ftruncate(owned.as_raw_fd(), len as libc::off_t) } < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -123,11 +162,10 @@ impl ShmInodeMap {
         Ok(map)
     }
 
-    /// Map an inherited memfd passed through the environment.
+    /// Map an inherited shared-memory fd passed through the environment.
     ///
     /// # Errors
     /// Returns an error when the descriptor is invalid or the map is corrupt.
-    #[cfg(target_os = "linux")]
     pub fn from_fd(fd: std::os::fd::RawFd) -> io::Result<Arc<Self>> {
         use std::env;
         use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
@@ -191,24 +229,7 @@ impl ShmInodeMap {
         }))
     }
 
-    #[cfg(not(target_os = "linux"))]
-    pub fn create(_slot_count: u32, _uid: u32, _gid: u32) -> io::Result<Arc<Self>> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "shared-memory sessions require Linux",
-        ))
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    pub fn from_fd(_fd: std::os::fd::RawFd) -> io::Result<Arc<Self>> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "shared-memory sessions require Linux",
-        ))
-    }
-
     /// File descriptor children inherit (supervisor clears CLOEXEC before spawn).
-    #[cfg(target_os = "linux")]
     pub fn inherited_fd(&self) -> std::os::fd::RawFd {
         use std::os::fd::AsRawFd;
         self._fd.as_raw_fd()
@@ -521,7 +542,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn shm_roundtrip_chown_and_lookup() {
         let map = ShmInodeMap::create(256, 0, 0).unwrap();
@@ -535,7 +555,6 @@ mod tests {
         assert_eq!(inode.gid, 7);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn shm_remove_then_relookup_returns_none() {
         let map = ShmInodeMap::create(256, 0, 0).unwrap();
@@ -546,7 +565,6 @@ mod tests {
         assert!(!map.remove_inode((9, 42)));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn shm_remove_does_not_break_probing_for_colliding_key() {
         // Force a collision: create a table small enough that two distinct
@@ -566,7 +584,6 @@ mod tests {
         assert_eq!(inode_b.gid, 40);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn shm_reinsert_into_tombstone_does_not_leak_stale_data() {
         let map = ShmInodeMap::create(1, 0, 0).unwrap(); // rounds up to 1024 slots
@@ -589,7 +606,6 @@ mod tests {
         assert!(inode_b.xattrs.is_empty());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn shm_xattr_roundtrip_through_upsert_inode() {
         let map = ShmInodeMap::create(256, 0, 0).unwrap();
@@ -619,7 +635,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn shm_oversized_xattr_blob_is_dropped_not_corrupting() {
         let map = ShmInodeMap::create(256, 0, 0).unwrap();
