@@ -41,6 +41,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # macOS System Integrity Protection strips `DYLD_INSERT_LIBRARIES` from
+      # Apple-signed binaries (`/bin/echo`, `/usr/bin/true`, …), and spawning
+      # them under interposition fails. Install GNU coreutils and put its
+      # unprefixed binaries first on `PATH` so the tests resolve non-SIP
+      # `echo`/`true`/`false`/`chown`/`id` (mirrors what the docs and macOS
+      # benchmark paths already assume).
+      - name: Install GNU coreutils (work around macOS SIP)
+        run: |
+          brew install coreutils
+          echo "/opt/homebrew/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # See the comment on the `test` job.
       - run: cargo build --workspace
