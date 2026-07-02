@@ -22,7 +22,7 @@ helper_manifest="$root/bench/stat-loop/Cargo.toml"
 # bench/stat-loop is a workspace member here (unlike in fakeroost, where it's
 # standalone), so it builds into the shared top-level target/, not its own.
 helper="$root/target/release/stat-loop"
-pseudoroot="$root/target/release/pseudoroot"
+pseudoroot="$root/target/release/pdr"
 fakeroost="$root/../fakeroost/target/release/fakeroost"
 
 workers=()

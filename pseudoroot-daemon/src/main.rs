@@ -6,19 +6,6 @@ use pseudoroot_core::protocol::DEFAULT_SOCKET_PATH;
 use std::env;
 use std::path::PathBuf;
 
-/// Installed as `pseudoroot-daemon` (main) and `pdrd` (short).
-fn program_name() -> &'static str {
-    if env::current_exe()
-        .ok()
-        .and_then(|p| p.file_stem().map(|s| s.to_owned()))
-        .is_some_and(|s| s == "pdrd")
-    {
-        "pdrd"
-    } else {
-        "pseudoroot-daemon"
-    }
-}
-
 /// Configuration for the daemon
 #[derive(Parser, Debug)]
 #[command(author = "Luca Barbato <lu_zero@gentoo.org>")]
@@ -47,33 +34,39 @@ struct Args {
 }
 
 fn main() {
-    let name = program_name();
-    let args = Args::command().bin_name(name).get_matches_from(env::args());
+    let args = Args::command()
+        .bin_name("pdrd")
+        .get_matches_from(env::args());
     let args = Args::from_arg_matches(&args).unwrap_or_else(|e| e.exit());
 
-    println!("{}: Listening on {}", name, args.socket_path.display());
-    println!("{}: Initial UID={}, GID={}", name, args.uid, args.gid);
+    println!("pdrd: Listening on {}", args.socket_path.display());
+    println!("pdrd: Initial UID={}, GID={}", args.uid, args.gid);
     println!("Press Ctrl+C to stop");
 
     let socket_path = args.socket_path.clone();
     let cleanup = args.cleanup;
-    ctrlc::set_handler(move || {
-        println!("\n{name}: Shutting down...");
+    if let Err(err) = ctrlc::set_handler(move || {
+        println!("\npdrd: Shutting down...");
         if cleanup {
             let _ = std::fs::remove_file(&socket_path);
         }
         std::process::exit(0);
-    })
-    .expect("Error setting Ctrl+C handler");
+    }) {
+        eprintln!("Error: Failed to set Ctrl+C handler: {err}");
+        std::process::exit(1);
+    }
 
-    if let Err(err) = daemon_server::run_blocking(
+    match daemon_server::run_blocking(
         &args.socket_path,
         args.uid,
         args.gid,
         args.verbose,
         args.cleanup,
     ) {
-        eprintln!("Error: {err}");
-        std::process::exit(1);
+        Ok(()) => std::process::exit(0),
+        Err(err) => {
+            eprintln!("Error: {err}");
+            std::process::exit(1);
+        }
     }
 }

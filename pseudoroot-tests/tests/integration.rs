@@ -4,8 +4,7 @@
 //! for core functionality like getuid, getgid, and stat.
 
 use pseudoroot_tests::{
-    cleanup_test_file, create_test_file, find_pseudoroot_bin, find_pseudoroot_lib,
-    run_pseudoroot_command,
+    cleanup_test_file, create_test_file, find_pdr_bin, find_pseudoroot_lib, run_pseudoroot_command,
 };
 use std::process::Command;
 use std::str;
@@ -13,9 +12,9 @@ use std::str;
 /// Test that the pseudoroot binary itself works
 #[test]
 fn test_pseudoroot_binary_runs() {
-    let pseudoroot_bin = find_pseudoroot_bin();
+    let pdr_bin = find_pdr_bin();
 
-    let output = Command::new(pseudoroot_bin)
+    let output = Command::new(pdr_bin)
         .arg("--help")
         .output()
         .expect("Failed to run pseudoroot --help");
@@ -30,9 +29,9 @@ fn test_pseudoroot_binary_runs() {
 /// Test that the library path can be printed
 #[test]
 fn test_print_library_path() {
-    let pseudoroot_bin = find_pseudoroot_bin();
+    let pdr_bin = find_pdr_bin();
 
-    let output = Command::new(pseudoroot_bin)
+    let output = Command::new(pdr_bin)
         .arg("print-library-path")
         .output()
         .expect("Failed to run pseudoroot print-library-path");

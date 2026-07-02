@@ -60,7 +60,7 @@ cores="$(nproc)"
 installer_uid="$(id -u)"
 installer_gid="$(id -g)"
 install_mk="$root/bench/install.mk"
-pseudoroot="$root/target/release/pseudoroot"
+pseudoroot="$root/target/release/pdr"
 pdrd="$root/target/release/pdrd"
 fakeroost="$root/../fakeroost/target/release/fakeroost"
 pdrd_socket=""
@@ -92,9 +92,6 @@ fi
 
 have_pdrd=0
 if [[ -x "$pdrd" ]]; then
-    have_pdrd=1
-elif [[ -x "$root/target/release/pseudoroot-daemon" ]]; then
-    pdrd="$root/target/release/pseudoroot-daemon"
     have_pdrd=1
 else
     echo "# (pdrd not built; skipping pseudoroot_daemon column)" >&2

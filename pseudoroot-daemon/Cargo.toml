@@ -8,10 +8,6 @@ authors.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "pseudoroot-daemon"
-path = "src/main.rs"
-
-[[bin]]
 name = "pdrd"
 path = "src/main.rs"
 

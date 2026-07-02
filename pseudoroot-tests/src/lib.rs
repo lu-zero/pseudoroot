@@ -23,46 +23,15 @@ fn target_artifact(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Find the main CLI binary (`pseudoroot`, falling back to `pdr`).
-pub fn find_pseudoroot_bin() -> PathBuf {
-    for name in ["pseudoroot", "pdr"] {
-        if let Some(path) = target_artifact(name) {
-            return path;
-        }
-    }
-    panic!(
-        "Could not find pseudoroot/pdr binary under {}/target/{{debug,release}}/. \
-         Run `cargo build -p pseudoroot` first.",
-        workspace_root().display()
-    );
-}
-
-/// Find the short CLI binary (`pdr`, falling back to `pseudoroot`).
+/// Find the CLI binary (`pdr`).
 pub fn find_pdr_bin() -> PathBuf {
-    for name in ["pdr", "pseudoroot"] {
-        if let Some(path) = target_artifact(name) {
-            return path;
-        }
-    }
-    panic!(
-        "Could not find pdr/pseudoroot binary under {}/target/{{debug,release}}/. \
-         Run `cargo build -p pseudoroot` first.",
-        workspace_root().display()
-    );
-}
-
-/// Find the daemon binary (`pdrd`, falling back to `pseudoroot-daemon`).
-pub fn find_pdrd_bin() -> PathBuf {
-    for name in ["pdrd", "pseudoroot-daemon"] {
-        if let Some(path) = target_artifact(name) {
-            return path;
-        }
-    }
-    panic!(
-        "Could not find pdrd/pseudoroot-daemon under {}/target/{{debug,release}}/. \
-         Run `cargo build -p pseudoroot-daemon` first.",
-        workspace_root().display()
-    );
+    target_artifact("pdr").unwrap_or_else(|| {
+        panic!(
+            "Could not find pdr binary under {}/target/{{debug,release}}/. \
+             Run `cargo build -p pseudoroot` first.",
+            workspace_root().display()
+        )
+    })
 }
 
 /// Find the path to the interposed shared library.
@@ -81,22 +50,6 @@ pub fn find_pseudoroot_lib() -> PathBuf {
             workspace_root().display()
         );
     })
-}
-
-/// Whether `pseudoroot` needs an explicit `run` subcommand (unlike `pdr`).
-fn needs_run_subcommand(bin: &Path) -> bool {
-    bin.file_name()
-        .and_then(|s| s.to_str())
-        .is_some_and(|name| name == "pseudoroot")
-}
-
-/// Start building a command through the CLI, inserting `run` when required.
-pub fn command_for_cli_run(bin: &Path) -> Command {
-    let mut cmd = Command::new(bin);
-    if needs_run_subcommand(bin) {
-        cmd.arg("run");
-    }
-    cmd
 }
 
 /// Run a command through the API with the given UID and GID (fakeroost-compatible).

@@ -1,7 +1,9 @@
 //! CLI for running commands with fake root privileges.
 //!
-//! Installed as `pseudoroot` (main) and `pdr` (short). Uses the same
-//! [`pseudoroot::FakerootCommandExt`] API as programmatic consumers.
+//! Uses the same [`pseudoroot::FakerootCommandExt`] API as programmatic
+//! consumers. `pdr start` runs the session daemon in-process (via
+//! [`pseudoroot_core::daemon_server::run_blocking`]) — no separate `pdrd`
+//! binary is required for `pdr`'s own functionality.
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use pseudoroot::FakerootCommandExt;
@@ -12,7 +14,7 @@ use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::net::UnixStream;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{self, Command, Stdio};
 
 const SUBCOMMANDS: &[&str] = &[
@@ -24,40 +26,7 @@ const SUBCOMMANDS: &[&str] = &[
     "help",
 ];
 
-/// How this binary was invoked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CliName {
-    /// `pdr` — fakeroot-style: `pdr [opts] [--] <cmd> [args…]`
-    Short,
-    /// `pseudoroot` — explicit subcommands: `pseudoroot run …`
-    Long,
-}
-
-impl CliName {
-    fn detect() -> Self {
-        let stem = env::current_exe()
-            .ok()
-            .and_then(|p| p.file_stem().map(|s| s.to_owned()));
-        if stem.is_some_and(|s| s == "pdr") {
-            Self::Short
-        } else {
-            Self::Long
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Short => "pdr",
-            Self::Long => "pseudoroot",
-        }
-    }
-
-    fn is_short(self) -> bool {
-        matches!(self, Self::Short)
-    }
-}
-
-/// Fake-identity flags shared by `pdr` (top-level) and `pseudoroot run`.
+/// Fake-identity flags shared by the top-level form and `pdr run`.
 #[derive(Args, Debug)]
 struct RunArgs {
     /// Fake UID to use when running a command (default: 0 = root)
@@ -90,14 +59,14 @@ struct Cli {
     #[command(subcommand)]
     action: Option<Commands>,
 
-    /// Command to run (`pdr` only — when no subcommand is given)
+    /// Command to run (when no subcommand is given)
     #[arg(allow_hyphen_values = true)]
     command: Vec<String>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Run a command with fake root privileges (pseudoroot)
+    /// Run a command with fake root privileges
     Run {
         /// The command to run with fake root privileges
         #[arg(allow_hyphen_values = true)]
@@ -150,25 +119,21 @@ enum Commands {
 
 fn main() {
     pseudoroot::init();
-    let cli = CliName::detect();
-    let argv = adjust_args(cli, env::args_os().collect());
-    let mut cmd = Cli::command().bin_name(cli.as_str());
-    if cli.is_short() {
-        cmd = cmd.after_help(
-            "Examples:\n  \
-             pdr id\n  \
-             pdr --uid 1000 -- id -u\n  \
-             pdr --daemon -- make install\n  \
-             pdr start\n  \
-             pdr print-library-path",
-        );
-    }
+    let argv = adjust_args(env::args_os().collect());
+    let cmd = Cli::command().bin_name("pdr").after_help(
+        "Examples:\n  \
+         pdr id\n  \
+         pdr --uid 1000 -- id -u\n  \
+         pdr --daemon -- make install\n  \
+         pdr start\n  \
+         pdr print-library-path",
+    );
     let matches = cmd.get_matches_from(argv);
     let parsed = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     match parsed.action {
         Some(Commands::Run { command, run }) => {
-            run_command(cli, &command, run.daemon, run.socket_path, run.uid, run.gid)
+            run_command(&command, run.daemon, run.socket_path, run.uid, run.gid)
         }
 
         Some(Commands::Start {
@@ -185,28 +150,20 @@ fn main() {
 
         Some(Commands::PrintLibraryPath) => print_library_path(),
 
-        None if cli.is_short() => run_command(
-            cli,
+        None => run_command(
             &parsed.command,
             parsed.run.daemon,
             parsed.run.socket_path,
             parsed.run.uid,
             parsed.run.gid,
         ),
-
-        None => {
-            eprintln!("Error: No subcommand specified.");
-            eprintln!("Usage: {} run <command> [args...]", cli.as_str());
-            eprintln!("Try '{} --help' for more information.", cli.as_str());
-            process::exit(1);
-        }
     }
 }
 
-/// For `pdr`, insert the implicit `run` subcommand when the first arg is a
-/// bare command name (not a flag or known subcommand).
-fn adjust_args(cli: CliName, mut argv: Vec<OsString>) -> Vec<OsString> {
-    if !cli.is_short() || argv.len() < 2 {
+/// Insert the implicit `run` subcommand when the first arg is a bare command
+/// name (not a flag or known subcommand).
+fn adjust_args(mut argv: Vec<OsString>) -> Vec<OsString> {
+    if argv.len() < 2 {
         return argv;
     }
 
@@ -220,7 +177,6 @@ fn adjust_args(cli: CliName, mut argv: Vec<OsString>) -> Vec<OsString> {
 }
 
 fn run_command(
-    cli: CliName,
     cmd_args: &[String],
     daemon: bool,
     socket_path: Option<String>,
@@ -229,8 +185,8 @@ fn run_command(
 ) -> ! {
     if cmd_args.is_empty() {
         eprintln!("Error: No command specified.");
-        eprintln!("Usage: {} [OPTIONS] [--] <command> [args...]", cli.as_str());
-        eprintln!("Try '{} --help' for more information.", cli.as_str());
+        eprintln!("Usage: pdr [OPTIONS] [--] <command> [args...]");
+        eprintln!("Try 'pdr --help' for more information.");
         process::exit(1);
     }
 
@@ -266,14 +222,14 @@ fn print_library_path() -> ! {
             process::exit(0);
         }
         None => {
-            eprintln!("Error: Could not find pseudoroot library.");
-            eprintln!("Build it first with: cargo build -p pseudoroot-lib --release");
+            eprintln!("Error: Could not extract the pseudoroot library.");
+            eprintln!("Set PSEUDOROOT_LIB to override the library path.");
             process::exit(1);
         }
     }
 }
 
-/// Start the pseudoroot daemon (`pdrd` / `pseudoroot-daemon`).
+/// Start the pseudoroot session daemon in-process (no separate `pdrd` needed).
 fn start_daemon(
     socket_path: Option<String>,
     uid: u32,
@@ -281,45 +237,30 @@ fn start_daemon(
     verbose: bool,
     cleanup: bool,
 ) -> ! {
-    let daemon_bin = match find_daemon_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("Error: Could not find pdrd/pseudoroot-daemon binary.");
-            eprintln!("Build it first with: cargo build -p pseudoroot-daemon");
-            process::exit(1);
+    let socket_path = socket_path.unwrap_or_else(|| DEFAULT_SOCKET_PATH.to_string());
+    println!("pdr: Listening on {socket_path}");
+    println!("pdr: Initial UID={uid}, GID={gid}");
+    println!("Press Ctrl+C to stop");
+
+    let sp = socket_path.clone();
+    if let Err(err) = ctrlc::set_handler(move || {
+        println!("\npdr: Shutting down...");
+        if cleanup {
+            let _ = std::fs::remove_file(&sp);
         }
-    };
-
-    let socket = socket_path.unwrap_or_else(|| DEFAULT_SOCKET_PATH.to_string());
-    let mut command = Command::new(daemon_bin);
-    command
-        .arg("--socket-path")
-        .arg(socket)
-        .arg("--uid")
-        .arg(uid.to_string())
-        .arg("--gid")
-        .arg(gid.to_string());
-
-    if verbose {
-        command.arg("--verbose");
-    }
-    if cleanup {
-        command.arg("--cleanup");
+        process::exit(0);
+    }) {
+        eprintln!("Error: Failed to set Ctrl+C handler: {err}");
+        process::exit(1);
     }
 
-    command.stdin(Stdio::inherit());
-    command.stdout(Stdio::inherit());
-    command.stderr(Stdio::inherit());
-
-    let status = match command.status() {
-        Ok(status) => status,
-        Err(e) => {
-            eprintln!("Error: Failed to start daemon: {}", e);
+    match pseudoroot_core::daemon_server::run_blocking(&socket_path, uid, gid, verbose, cleanup) {
+        Ok(()) => process::exit(0),
+        Err(err) => {
+            eprintln!("Error: {err}");
             process::exit(1);
         }
-    };
-
-    process::exit(status.code().unwrap_or(1));
+    }
 }
 
 fn stop_daemon(socket_path: Option<String>) -> ! {
@@ -361,24 +302,4 @@ fn check_daemon_status(socket_path: Option<String>) -> ! {
             process::exit(1);
         }
     }
-}
-
-fn find_daemon_path() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-
-    if let Ok(exe_path) = env::current_exe() {
-        let exe_dir = exe_path.parent().unwrap_or_else(|| Path::new("/"));
-        for name in ["pdrd", "pseudoroot-daemon"] {
-            candidates.push(exe_dir.join(name));
-            candidates.push(exe_dir.join("..").join(name));
-        }
-    }
-
-    for profile in ["debug", "release"] {
-        for name in ["pdrd", "pseudoroot-daemon"] {
-            candidates.push(PathBuf::from("target").join(profile).join(name));
-        }
-    }
-
-    candidates.into_iter().find(|candidate| candidate.exists())
 }

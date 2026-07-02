@@ -32,7 +32,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     make_extra_args=(SHELL=/opt/homebrew/bin/bash)
 fi
 
-pseudoroot="$root/target/release/pseudoroot"
+pseudoroot="$root/target/release/pdr"
 fakeroost="$root/../fakeroost/target/release/fakeroost"
 [[ -x "$pseudoroot" ]] || cargo build --release
 

@@ -12,16 +12,13 @@ name = "pseudoroot"
 path = "src/lib.rs"
 
 [[bin]]
-name = "pseudoroot"
-path = "src/bin/pseudoroot.rs"
-
-[[bin]]
 name = "pdr"
-path = "src/bin/pseudoroot.rs"
+path = "src/bin/pdr.rs"
 
 [dependencies]
 clap.workspace = true
 ctor.workspace = true
+ctrlc.workspace = true
 libc.workspace = true
 pseudoroot-core.workspace = true
 tempfile.workspace = true
