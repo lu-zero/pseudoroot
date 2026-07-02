@@ -39,6 +39,13 @@ with every `tar --numeric-owner` listing showing the expected mixed
 ownership. On the compile workload pseudoroot tracks native wall time
 almost exactly at every job level.
 
+Re-confirmed on the same host after a structural cleanup pass (dead-code
+removal, `shm_map.rs` probe-loop dedup, `ownership.rs` `StatSource`
+consolidation, daemon RPC/framing dedup): stat() throughput, install/tar
+correctness, and compile overhead were all unchanged within normal
+run-to-run variance — see the
+[2026-07-02 unslop run](benchmark-results/2026-07-02-unslop.md).
+
 ### macOS (12-core ARM64 Apple Silicon)
 
 From the [2026-07-02 run](benchmark-results/2026-07-02.md) on a MacBook Pro with M2 Max:
