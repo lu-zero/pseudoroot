@@ -308,24 +308,32 @@ int main() {
 }
 
 /// Test xattr faking for security.capability.
-#[cfg(target_os = "linux")]
 #[test]
 fn test_xattr_interposition_with_c() {
     let test_file = "/tmp/pseudoroot_xattr_test";
     create_test_file(test_file);
 
+    // Darwin's setxattr/getxattr carry two extra args (a resource-fork
+    // `position` and an `options` flag) that glibc's don't.
     let c_template = r##"#include <stdio.h>
 #include <string.h>
 #include <sys/xattr.h>
+#ifdef __APPLE__
+#define PR_SETXATTR(p, n, v, s) setxattr(p, n, v, s, 0, 0)
+#define PR_GETXATTR(p, n, v, s) getxattr(p, n, v, s, 0, 0)
+#else
+#define PR_SETXATTR(p, n, v, s) setxattr(p, n, v, s, 0)
+#define PR_GETXATTR(p, n, v, s) getxattr(p, n, v, s)
+#endif
 int main() {
     const char *name = "security.capability";
     const unsigned char value[] = {0x01, 0x00, 0x00, 0x02};
-    if (setxattr("XFILEX", name, value, sizeof(value), 0) != 0) {
+    if (PR_SETXATTR("XFILEX", name, value, sizeof(value)) != 0) {
         perror("setxattr");
         return 1;
     }
     unsigned char buf[16];
-    ssize_t len = getxattr("XFILEX", name, buf, sizeof(buf));
+    ssize_t len = PR_GETXATTR("XFILEX", name, buf, sizeof(buf));
     if (len < 0) {
         perror("getxattr");
         return 1;
@@ -373,15 +381,19 @@ int main() {
 }
 
 /// Test mknod faking — placeholder file with device metadata in stat.
-#[cfg(target_os = "linux")]
 #[test]
 fn test_mknod_interposition_with_c() {
     let test_file = "/tmp/pseudoroot_mknod_test";
     let _ = std::fs::remove_file(test_file);
 
+    // `major`/`minor`/`makedev` live in <sys/sysmacros.h> on glibc but in
+    // <sys/types.h> on macOS.
     let c_template = r##"#include <stdio.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#ifdef __linux__
 #include <sys/sysmacros.h>
+#endif
 int main() {
     if (mknod("XFILEX", S_IFCHR | 0644, makedev(1, 3)) != 0) {
         perror("mknod");
