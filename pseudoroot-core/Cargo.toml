@@ -6,6 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Inode-keyed fake-root state, daemon IPC protocol, and shared-memory session map for pseudoroot"
+documentation = "https://docs.rs/pseudoroot-core"
 
 [dependencies]
 bincode.workspace = true

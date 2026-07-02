@@ -6,6 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "A Rust fakeroot via library interposition (LD_PRELOAD / DYLD_INSERT_LIBRARIES): run commands as if root, no real root access needed"
+documentation = "https://docs.rs/pseudoroot"
 
 [lib]
 name = "pseudoroot"

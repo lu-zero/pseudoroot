@@ -16,6 +16,10 @@ rust-version = "1.92"
 license = "MIT"
 authors = ["Luca Barbato <lu_zero@gentoo.org>"]
 repository = "https://github.com/lu-zero/pseudoroot"
+homepage = "https://github.com/lu-zero/pseudoroot"
+readme = "README.md"
+keywords = ["fakeroot", "ld-preload", "interposition", "root", "syscall"]
+categories = ["command-line-utilities", "development-tools::build-utils", "os"]
 
 [workspace.dependencies]
 bincode = "1.3"
