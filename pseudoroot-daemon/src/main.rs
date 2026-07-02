@@ -9,7 +9,7 @@ use std::path::PathBuf;
 /// Configuration for the daemon
 #[derive(Parser, Debug)]
 #[command(author = "Luca Barbato <lu_zero@gentoo.org>")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Daemon for persistent fake root state")]
 struct Args {
     /// Path to the Unix domain socket

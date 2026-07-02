@@ -49,7 +49,7 @@ struct RunArgs {
 /// Run commands with fake root privileges.
 #[derive(Parser, Debug)]
 #[command(author = "Luca Barbato <lu_zero@gentoo.org>")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Run commands with fake root privileges", long_about = None)]
 #[command(subcommand_negates_reqs = true)]
 struct Cli {

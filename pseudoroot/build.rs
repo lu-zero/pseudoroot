@@ -74,7 +74,9 @@ fn try_main() -> Result<(), String> {
         "--target-dir",
     ])
     .arg(&embed_target_dir)
-    .arg("--offline")
+    // No `--offline`: a registry install resolves `pseudoroot-core` (and
+    // ctor/libc) from crates.io, which needs the index. In-workspace dev
+    // builds still avoid the network for `pseudoroot-core` via the [patch] above.
     .current_dir(&out_dir);
     if profile == "release" {
         cmd.arg("--release");
@@ -116,7 +118,7 @@ fn try_main() -> Result<(), String> {
 /// workspace root so it never merges with the surrounding repo workspace.
 const MANIFEST: &str = r#"[package]
 name = "pseudoroot-lib-embed"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 build = "build.rs"
 publish = false
@@ -129,7 +131,7 @@ path = "src/lib.rs"
 [dependencies]
 ctor = "0.2"
 libc = "0.2"
-pseudoroot-core = "0.1.0"
+pseudoroot-core = "0.2.0"
 
 [workspace]
 "#;
