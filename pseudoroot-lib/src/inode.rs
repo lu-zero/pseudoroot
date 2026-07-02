@@ -73,8 +73,13 @@ pub fn chown_stat_flags(at_flags: i32) -> i32 {
 }
 
 /// Whether `AT_EMPTY_PATH` is set in `*at` syscall flags.
+///
+/// `AT_EMPTY_PATH` is `0` on macOS (see the constant above), which makes the
+/// mask a constant `false` there — intentional, so silence clippy's
+/// zero-mask lint rather than special-casing the platform in the body.
 #[inline]
 #[must_use]
+#[allow(clippy::bad_bit_mask)]
 pub fn at_empty_path(at_flags: i32) -> bool {
     at_flags & AT_EMPTY_PATH != 0
 }

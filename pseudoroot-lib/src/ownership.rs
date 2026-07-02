@@ -28,6 +28,7 @@ const MAX_XATTR: usize = 64 * 1024;
 static LIBRARY_INIT: Once = Once::new();
 static LIBRARY_INIT_DONE: AtomicBool = AtomicBool::new(false);
 static LIBRARY_INITIALIZING: AtomicBool = AtomicBool::new(false);
+static CTOR_DONE: AtomicBool = AtomicBool::new(false);
 static BOOT_UID: AtomicU32 = AtomicU32::new(0);
 static BOOT_GID: AtomicU32 = AtomicU32::new(0);
 
@@ -45,11 +46,22 @@ pub(crate) fn library_init_done() -> bool {
 pub fn store_bootstrap_ids(uid: u32, gid: u32) {
     BOOT_UID.store(uid, Ordering::Relaxed);
     BOOT_GID.store(gid, Ordering::Relaxed);
+    CTOR_DONE.store(true, Ordering::Release);
 }
 
 fn ensure_library_init() {
     if LIBRARY_INIT_DONE.load(Ordering::Acquire) {
         ensure_session_backing_init();
+        return;
+    }
+    if !CTOR_DONE.load(Ordering::Acquire) {
+        // Called before our own constructor has run. On macOS dyld applies
+        // `__interpose` before running any initializers, so libSystem's own
+        // bootstrap (e.g. `__malloc_init` stat'ing feature-flag files) enters
+        // our hooks while this image's thread-local support is still missing —
+        // initializing global state here (DashMap → RandomState → TLS) aborts
+        // in `_tlv_bootstrap_error`. Stay on the lock-free bootstrap path;
+        // callers all fall back to `BOOT_UID`/`BOOT_GID` until init completes.
         return;
     }
     if LIBRARY_INITIALIZING.load(Ordering::Acquire) {
@@ -889,8 +901,12 @@ mod tests {
 
     #[test]
     fn compose_mode_keeps_type_overrides_perms() {
-        let real = libc::S_IFREG | 0o644;
-        assert_eq!(compose_mode(real, 0o4755), libc::S_IFREG | 0o4755);
+        // `mode_t` is u16 on macOS, so widen explicitly.
+        let real = u32::from(libc::S_IFREG) | 0o644;
+        assert_eq!(
+            compose_mode(real, 0o4755),
+            u32::from(libc::S_IFREG) | 0o4755
+        );
     }
 
     #[test]

@@ -28,17 +28,25 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+// On macOS the `*at`/xattr/mknod interposition surface is still Linux-gated
+// (see todo/macos.md item 1), which leaves their ownership/inode helpers
+// compiled but unreferenced there.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod inode;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod ownership;
 mod platform;
 
 use ownership::{
-    current_fake_gid, current_fake_uid, fake_getxattr_fd, fake_getxattr_path, fake_listxattr_fd,
-    fake_listxattr_path, fake_mknod_path, fake_mknodat, fake_removexattr_fd, fake_removexattr_path,
-    fake_setxattr_fd, fake_setxattr_path, maybe_remove_inode_at, maybe_remove_inode_path,
-    modify_stat_buf, prepare_rename_overwrite, record_chmod_at, record_chmod_fd, record_chmod_path,
-    record_chown_at, record_chown_fd, record_chown_path, set_current_ids, set_fsuid,
-    setfsgid as set_fake_fsgid,
+    current_fake_gid, current_fake_uid, maybe_remove_inode_path, modify_stat_buf,
+    prepare_rename_overwrite, record_chmod_fd, record_chmod_path, record_chown_fd,
+    record_chown_path, set_current_ids, set_fsuid, setfsgid as set_fake_fsgid,
+};
+#[cfg(target_os = "linux")]
+use ownership::{
+    fake_getxattr_fd, fake_getxattr_path, fake_listxattr_fd, fake_listxattr_path, fake_mknod_path,
+    fake_mknodat, fake_removexattr_fd, fake_removexattr_path, fake_setxattr_fd, fake_setxattr_path,
+    maybe_remove_inode_at, record_chmod_at, record_chown_at,
 };
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -65,7 +73,7 @@ pub use platform::*;
 /// Get the current fake UID
 ///
 /// This wraps the real getuid() system call to return the fake UID.
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn getuid() -> u32 {
     current_fake_uid()
 }
@@ -73,7 +81,7 @@ pub extern "C" fn getuid() -> u32 {
 /// Get the current effective UID
 ///
 /// This wraps the real geteuid() system call to return the fake effective UID.
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn geteuid() -> u32 {
     current_fake_uid()
 }
@@ -81,7 +89,7 @@ pub extern "C" fn geteuid() -> u32 {
 /// Get the current GID
 ///
 /// This wraps the real getgid() system call to return the fake GID.
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn getgid() -> u32 {
     current_fake_gid()
 }
@@ -89,13 +97,13 @@ pub extern "C" fn getgid() -> u32 {
 /// Get the current effective GID
 ///
 /// This wraps the real getegid() system call to return the fake effective GID.
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn getegid() -> u32 {
     current_fake_gid()
 }
 
 /// Get real, effective, and saved user IDs
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn getresuid(ruid: *mut u32, euid: *mut u32, suid: *mut u32) -> i32 {
     let current_uid = getuid();
 
@@ -119,7 +127,7 @@ pub extern "C" fn getresuid(ruid: *mut u32, euid: *mut u32, suid: *mut u32) -> i
 }
 
 /// Get real, effective, and saved group IDs
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn getresgid(rgid: *mut u32, egid: *mut u32, sgid: *mut u32) -> i32 {
     let current_gid = getgid();
 
@@ -143,49 +151,49 @@ pub extern "C" fn getresgid(rgid: *mut u32, egid: *mut u32, sgid: *mut u32) -> i
 }
 
 /// Set real user ID - always succeeds in fake mode
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn setuid(uid: u32) -> i32 {
     set_current_ids(uid, getgid())
 }
 
 /// Set real group ID - always succeeds in fake mode
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn setgid(gid: u32) -> i32 {
     set_current_ids(getuid(), gid)
 }
 
 /// Set real and effective user IDs
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn setreuid(_ruid: u32, euid: u32) -> i32 {
     set_current_ids(euid, getgid())
 }
 
 /// Set real and effective group IDs
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn setregid(_rgid: u32, egid: u32) -> i32 {
     set_current_ids(getuid(), egid)
 }
 
 /// Set real, effective, and saved user IDs
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn setresuid(_ruid: u32, euid: u32, _suid: u32) -> i32 {
     set_current_ids(euid, getgid())
 }
 
 /// Set real, effective, and saved group IDs
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn setresgid(_rgid: u32, egid: u32, _sgid: u32) -> i32 {
     set_current_ids(getuid(), egid)
 }
 
 /// Set filesystem user ID
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn setfsuid(uid: u32) -> i32 {
     set_fsuid(uid) as i32
 }
 
 /// Set filesystem group ID
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn setfsgid(gid: u32) -> i32 {
     set_fake_fsgid(gid) as i32
 }
@@ -193,7 +201,7 @@ pub extern "C" fn setfsgid(gid: u32) -> i32 {
 /// Set file ownership
 ///
 /// This intercepts chown() to record ownership changes in our fake state.
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn chown(path: *const c_char, uid: u32, gid: u32) -> i32 {
     record_chown_path(path, false, uid, gid)
 }
@@ -201,7 +209,7 @@ pub extern "C" fn chown(path: *const c_char, uid: u32, gid: u32) -> i32 {
 /// Get file status
 ///
 /// This wraps stat() to return fake ownership information.
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn stat(path: *const c_char, buf: *mut libc::stat) -> i32 {
     let result = unsafe { platform::real_stat(path, buf) };
 
@@ -213,7 +221,7 @@ pub extern "C" fn stat(path: *const c_char, buf: *mut libc::stat) -> i32 {
 }
 
 /// Get file status for a file descriptor
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn fstat(fd: i32, buf: *mut libc::stat) -> i32 {
     let result = unsafe { platform::real_fstat(fd, buf) };
 
@@ -225,7 +233,7 @@ pub extern "C" fn fstat(fd: i32, buf: *mut libc::stat) -> i32 {
 }
 
 /// Get file status for a path with symbolic link following
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn lstat(path: *const c_char, buf: *mut libc::stat) -> i32 {
     let result = unsafe { platform::real_lstat(path, buf) };
 
@@ -274,13 +282,13 @@ pub extern "C" fn statx(
 }
 
 /// Change file mode
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn chmod(path: *const c_char, mode: libc::mode_t) -> i32 {
     record_chmod_path(path, mode)
 }
 
 /// Change file mode by file descriptor
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn fchmod(fd: i32, mode: libc::mode_t) -> i32 {
     record_chmod_fd(fd, mode)
 }
@@ -293,13 +301,13 @@ pub extern "C" fn fchmodat(dirfd: i32, path: *const c_char, mode: libc::mode_t, 
 }
 
 /// Change file ownership by path (no symlink following)
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn lchown(path: *const c_char, uid: u32, gid: u32) -> i32 {
     record_chown_path(path, true, uid, gid)
 }
 
 /// Change file ownership by file descriptor
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn fchown(fd: i32, uid: u32, gid: u32) -> i32 {
     record_chown_fd(fd, uid, gid)
 }
@@ -323,7 +331,7 @@ pub unsafe fn cstr_to_string(cstr: *const c_char) -> Option<String> {
 }
 
 /// Remove directory entry (delete file)
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn unlink(path: *const c_char) -> i32 {
     maybe_remove_inode_path(path);
     unsafe { platform::real_unlink(path) }
@@ -338,14 +346,14 @@ pub extern "C" fn unlinkat(dirfd: i32, path: *const c_char, flags: i32) -> i32 {
 }
 
 /// Remove directory
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn rmdir(path: *const c_char) -> i32 {
     maybe_remove_inode_path(path);
     unsafe { platform::real_rmdir(path) }
 }
 
 /// Rename a file
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn rename(oldpath: *const c_char, newpath: *const c_char) -> i32 {
     prepare_rename_overwrite(libc::AT_FDCWD, oldpath, libc::AT_FDCWD, newpath);
     unsafe { platform::real_rename(oldpath, newpath) }
@@ -398,7 +406,7 @@ pub extern "C" fn mknodat(
 }
 
 /// Set supplementary group IDs - always succeeds in fake mode
-#[unsafe(no_mangle)]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn setgroups(_size: libc::size_t, _list: *const libc::gid_t) -> i32 {
     0
 }
@@ -514,4 +522,74 @@ pub extern "C" fn lremovexattr(path: *const c_char, name: *const c_char) -> i32 
 #[unsafe(no_mangle)]
 pub extern "C" fn fremovexattr(fd: i32, name: *const c_char) -> i32 {
     fake_removexattr_fd(fd, name)
+}
+
+/// dyld interposition table for macOS.
+///
+/// On Darwin, `DYLD_INSERT_LIBRARIES` alone does not rebind anything: the
+/// two-level namespace binds every image's libc calls straight to libSystem,
+/// so exporting a symbol named `stat` (the `LD_PRELOAD` trick) has no effect.
+/// Interposition instead happens through `__DATA,__interpose`, a section of
+/// `(replacement, replacee)` pointer pairs that dyld processes at load time.
+///
+/// Two consequences shape the code above and in `platform::macos`:
+/// - this image must *not* export the libc names (`no_mangle` is Linux-only),
+///   otherwise the replacee relocation would bind to our own definition;
+/// - dyld never applies interposition to the interposing image itself, so
+///   `real_*` wrappers can call libc directly without `dlsym(RTLD_NEXT)`.
+///
+/// Taking the *address* of the `libc` crate's declaration (rather than naming
+/// the symbol) also picks up `$INODE64`-suffixed variants on x86_64 for free.
+///
+/// `getresuid`/`getresgid`, `setresuid`/`setresgid`, and `setfsuid`/`setfsgid`
+/// have no Darwin counterpart in libSystem, so they get no entry here.
+#[cfg(target_os = "macos")]
+mod interpose {
+    /// One `(replacement, replacee)` pair in the `__interpose` section.
+    #[repr(C)]
+    struct InterposeEntry {
+        replacement: *const (),
+        replacee: *const (),
+    }
+
+    // SAFETY: the entries are immutable function addresses only read by dyld.
+    unsafe impl Sync for InterposeEntry {}
+
+    macro_rules! interpose {
+        ($($entry:ident: $replacee:path => $replacement:path;)+) => {
+            $(
+                #[used]
+                #[unsafe(link_section = "__DATA,__interpose")]
+                static $entry: InterposeEntry = InterposeEntry {
+                    replacement: $replacement as *const (),
+                    replacee: $replacee as *const (),
+                };
+            )+
+        };
+    }
+
+    interpose! {
+        GETUID: libc::getuid => super::getuid;
+        GETEUID: libc::geteuid => super::geteuid;
+        GETGID: libc::getgid => super::getgid;
+        GETEGID: libc::getegid => super::getegid;
+        SETUID: libc::setuid => super::setuid;
+        SETGID: libc::setgid => super::setgid;
+        SETREUID: libc::setreuid => super::setreuid;
+        SETREGID: libc::setregid => super::setregid;
+        // Darwin's setgroups takes `c_int`; ours takes `size_t` but ignores
+        // the argument, so the width mismatch is inconsequential.
+        SETGROUPS: libc::setgroups => super::setgroups;
+        CHOWN: libc::chown => super::chown;
+        LCHOWN: libc::lchown => super::lchown;
+        FCHOWN: libc::fchown => super::fchown;
+        STAT: libc::stat => super::stat;
+        FSTAT: libc::fstat => super::fstat;
+        LSTAT: libc::lstat => super::lstat;
+        CHMOD: libc::chmod => super::chmod;
+        FCHMOD: libc::fchmod => super::fchmod;
+        UNLINK: libc::unlink => super::unlink;
+        RMDIR: libc::rmdir => super::rmdir;
+        RENAME: libc::rename => super::rename;
+    }
 }
