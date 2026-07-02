@@ -58,12 +58,25 @@ pub unsafe fn real_unlink(path: *const c_char) -> i32 {
     unsafe { libc::unlink(path) }
 }
 
+pub unsafe fn real_unlinkat(dirfd: i32, path: *const c_char, flags: i32) -> i32 {
+    unsafe { libc::unlinkat(dirfd, path, flags) }
+}
+
 pub unsafe fn real_rmdir(path: *const c_char) -> i32 {
     unsafe { libc::rmdir(path) }
 }
 
 pub unsafe fn real_rename(oldpath: *const c_char, newpath: *const c_char) -> i32 {
     unsafe { libc::rename(oldpath, newpath) }
+}
+
+pub unsafe fn real_renameat(
+    olddirfd: i32,
+    oldpath: *const c_char,
+    newdirfd: i32,
+    newpath: *const c_char,
+) -> i32 {
+    unsafe { libc::renameat(olddirfd, oldpath, newdirfd, newpath) }
 }
 
 pub unsafe fn real_mknod(pathname: *const c_char, mode: libc::mode_t, dev: libc::dev_t) -> i32 {

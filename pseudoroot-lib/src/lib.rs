@@ -28,12 +28,7 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-// On macOS the `*at`/xattr/mknod interposition surface is still Linux-gated
-// (see todo/macos.md item 1), which leaves their ownership/inode helpers
-// compiled but unreferenced there.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod inode;
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod ownership;
 mod platform;
 
@@ -42,7 +37,7 @@ use ownership::{
     prepare_rename_overwrite, record_chmod_fd, record_chmod_path, record_chown_fd,
     record_chown_path, set_current_ids, set_fsuid, setfsgid as set_fake_fsgid,
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use ownership::{
     fake_getxattr_fd, fake_getxattr_path, fake_listxattr_fd, fake_listxattr_path, fake_mknod_path,
     fake_mknodat, fake_removexattr_fd, fake_removexattr_path, fake_setxattr_fd, fake_setxattr_path,
@@ -245,8 +240,8 @@ pub extern "C" fn lstat(path: *const c_char, buf: *mut libc::stat) -> i32 {
 }
 
 /// Get file status relative to directory file descriptor
-#[cfg(target_os = "linux")]
-#[unsafe(no_mangle)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn fstatat(
     dirfd: i32,
     pathname: *const c_char,
@@ -294,8 +289,8 @@ pub extern "C" fn fchmod(fd: i32, mode: libc::mode_t) -> i32 {
 }
 
 /// Change file mode relative to directory file descriptor
-#[cfg(target_os = "linux")]
-#[unsafe(no_mangle)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn fchmodat(dirfd: i32, path: *const c_char, mode: libc::mode_t, flags: i32) -> i32 {
     record_chmod_at(dirfd, path, mode, flags)
 }
@@ -313,8 +308,8 @@ pub extern "C" fn fchown(fd: i32, uid: u32, gid: u32) -> i32 {
 }
 
 /// Change file ownership relative to directory file descriptor
-#[cfg(target_os = "linux")]
-#[unsafe(no_mangle)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn fchownat(dirfd: i32, path: *const c_char, uid: u32, gid: u32, flags: i32) -> i32 {
     record_chown_at(dirfd, path, flags, uid, gid)
 }
@@ -338,8 +333,8 @@ pub extern "C" fn unlink(path: *const c_char) -> i32 {
 }
 
 /// Remove directory entry relative to directory file descriptor
-#[cfg(target_os = "linux")]
-#[unsafe(no_mangle)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn unlinkat(dirfd: i32, path: *const c_char, flags: i32) -> i32 {
     maybe_remove_inode_at(dirfd, path, flags);
     unsafe { platform::real_unlinkat(dirfd, path, flags) }
@@ -360,8 +355,8 @@ pub extern "C" fn rename(oldpath: *const c_char, newpath: *const c_char) -> i32 
 }
 
 /// Rename a file relative to directory file descriptors
-#[cfg(target_os = "linux")]
-#[unsafe(no_mangle)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn renameat(
     olddirfd: i32,
     oldpath: *const c_char,
@@ -387,15 +382,15 @@ pub extern "C" fn renameat2(
 }
 
 /// Create a special file (FIFO, character device, block device)
-#[cfg(target_os = "linux")]
-#[unsafe(no_mangle)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn mknod(pathname: *const c_char, mode: libc::mode_t, dev: libc::dev_t) -> i32 {
     fake_mknod_path(pathname, mode, dev)
 }
 
 /// Create a special file relative to directory file descriptor
-#[cfg(target_os = "linux")]
-#[unsafe(no_mangle)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(target_os = "linux", unsafe(no_mangle))]
 pub extern "C" fn mknodat(
     dirfd: i32,
     pathname: *const c_char,
@@ -524,6 +519,95 @@ pub extern "C" fn fremovexattr(fd: i32, name: *const c_char) -> i32 {
     fake_removexattr_fd(fd, name)
 }
 
+// Darwin xattr hooks. Unlike Linux, macOS has no `l`-prefixed variants: the
+// plain functions carry an extra `position` (resource-fork offset, always 0
+// for the attributes we fake) and an `options` bitmask whose `XATTR_NOFOLLOW`
+// bit selects the no-symlink-follow behaviour. The get/list calls return
+// `ssize_t`, so the i32 the fake_* helpers produce is widened on the way out.
+#[cfg(target_os = "macos")]
+mod macos_xattr {
+    use super::{
+        fake_getxattr_fd, fake_getxattr_path, fake_listxattr_fd, fake_listxattr_path,
+        fake_removexattr_fd, fake_removexattr_path, fake_setxattr_fd, fake_setxattr_path,
+    };
+    use std::os::raw::c_char;
+
+    #[inline]
+    fn nofollow(options: i32) -> bool {
+        options & libc::XATTR_NOFOLLOW != 0
+    }
+
+    pub extern "C" fn setxattr(
+        path: *const c_char,
+        name: *const c_char,
+        value: *const std::ffi::c_void,
+        size: libc::size_t,
+        _position: u32,
+        options: i32,
+    ) -> i32 {
+        fake_setxattr_path(path, name, value, size, nofollow(options))
+    }
+
+    pub extern "C" fn fsetxattr(
+        fd: i32,
+        name: *const c_char,
+        value: *const std::ffi::c_void,
+        size: libc::size_t,
+        _position: u32,
+        _options: i32,
+    ) -> i32 {
+        fake_setxattr_fd(fd, name, value, size)
+    }
+
+    pub extern "C" fn getxattr(
+        path: *const c_char,
+        name: *const c_char,
+        value: *mut std::ffi::c_void,
+        size: libc::size_t,
+        _position: u32,
+        options: i32,
+    ) -> isize {
+        fake_getxattr_path(path, name, value, size, nofollow(options)) as isize
+    }
+
+    pub extern "C" fn fgetxattr(
+        fd: i32,
+        name: *const c_char,
+        value: *mut std::ffi::c_void,
+        size: libc::size_t,
+        _position: u32,
+        _options: i32,
+    ) -> isize {
+        fake_getxattr_fd(fd, name, value, size) as isize
+    }
+
+    pub extern "C" fn listxattr(
+        path: *const c_char,
+        list: *mut c_char,
+        size: libc::size_t,
+        options: i32,
+    ) -> isize {
+        fake_listxattr_path(path, list, size, nofollow(options)) as isize
+    }
+
+    pub extern "C" fn flistxattr(
+        fd: i32,
+        list: *mut c_char,
+        size: libc::size_t,
+        _options: i32,
+    ) -> isize {
+        fake_listxattr_fd(fd, list, size) as isize
+    }
+
+    pub extern "C" fn removexattr(path: *const c_char, name: *const c_char, options: i32) -> i32 {
+        fake_removexattr_path(path, name, nofollow(options))
+    }
+
+    pub extern "C" fn fremovexattr(fd: i32, name: *const c_char, _options: i32) -> i32 {
+        fake_removexattr_fd(fd, name)
+    }
+}
+
 /// dyld interposition table for macOS.
 ///
 /// On Darwin, `DYLD_INSERT_LIBRARIES` alone does not rebind anything: the
@@ -583,13 +667,29 @@ mod interpose {
         CHOWN: libc::chown => super::chown;
         LCHOWN: libc::lchown => super::lchown;
         FCHOWN: libc::fchown => super::fchown;
+        FCHOWNAT: libc::fchownat => super::fchownat;
         STAT: libc::stat => super::stat;
         FSTAT: libc::fstat => super::fstat;
         LSTAT: libc::lstat => super::lstat;
+        FSTATAT: libc::fstatat => super::fstatat;
         CHMOD: libc::chmod => super::chmod;
         FCHMOD: libc::fchmod => super::fchmod;
+        FCHMODAT: libc::fchmodat => super::fchmodat;
         UNLINK: libc::unlink => super::unlink;
+        UNLINKAT: libc::unlinkat => super::unlinkat;
         RMDIR: libc::rmdir => super::rmdir;
         RENAME: libc::rename => super::rename;
+        RENAMEAT: libc::renameat => super::renameat;
+        MKNOD: libc::mknod => super::mknod;
+        MKNODAT: libc::mknodat => super::mknodat;
+        // xattr uses the Darwin-signature hooks from `macos_xattr` (see there).
+        SETXATTR: libc::setxattr => super::macos_xattr::setxattr;
+        FSETXATTR: libc::fsetxattr => super::macos_xattr::fsetxattr;
+        GETXATTR: libc::getxattr => super::macos_xattr::getxattr;
+        FGETXATTR: libc::fgetxattr => super::macos_xattr::fgetxattr;
+        LISTXATTR: libc::listxattr => super::macos_xattr::listxattr;
+        FLISTXATTR: libc::flistxattr => super::macos_xattr::flistxattr;
+        REMOVEXATTR: libc::removexattr => super::macos_xattr::removexattr;
+        FREMOVEXATTR: libc::fremovexattr => super::macos_xattr::fremovexattr;
     }
 }

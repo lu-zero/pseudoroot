@@ -36,6 +36,10 @@ pub(crate) static FS_UID: AtomicU32 = AtomicU32::new(u32::MAX);
 pub(crate) static FS_GID: AtomicU32 = AtomicU32::new(u32::MAX);
 
 /// Whether the full library state has been initialized.
+///
+/// Only the Linux backend consults this (its `real_fn!` wrappers defer
+/// `dlsym(RTLD_NEXT)` until bootstrap is done); macOS calls libc directly.
+#[cfg(target_os = "linux")]
 #[inline]
 #[must_use]
 pub(crate) fn library_init_done() -> bool {
