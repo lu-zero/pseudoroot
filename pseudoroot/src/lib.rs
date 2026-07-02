@@ -18,7 +18,7 @@
 
 use pseudoroot_core::daemon_client::DAEMON_SOCKET_ENV;
 use pseudoroot_core::daemon_server::SessionDaemon;
-use pseudoroot_core::shm_map::{ShmInodeMap, SHM_FD_ENV, SHM_LEN_ENV};
+use pseudoroot_core::shm_map::{SHM_FD_ENV, SHM_LEN_ENV, ShmInodeMap};
 
 /// Disable memfd session backing and use Unix socket IPC instead.
 pub const SESSION_SHM_ENV: &str = "PSEUDOROOT_SESSION_SHM";
@@ -145,10 +145,10 @@ pub fn library_path() -> Option<PathBuf> {
 /// `mmap(PROT_EXEC)` there — exactly what `dlopen()`/`LD_PRELOAD` needs.
 /// `~/.cache` is essentially never `noexec`.
 fn cache_root() -> PathBuf {
-    if let Ok(xdg) = env::var("XDG_CACHE_HOME") {
-        if !xdg.is_empty() {
-            return PathBuf::from(xdg);
-        }
+    if let Ok(xdg) = env::var("XDG_CACHE_HOME")
+        && !xdg.is_empty()
+    {
+        return PathBuf::from(xdg);
     }
     if let Ok(home) = env::var("HOME") {
         return PathBuf::from(home).join(".cache");

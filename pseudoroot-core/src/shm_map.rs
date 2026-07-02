@@ -15,8 +15,8 @@
 use crate::state::{FakeInode, InodeKey};
 use std::collections::HashMap;
 use std::io;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Environment variable holding the inherited memfd file descriptor.
 pub const SHM_FD_ENV: &str = "PSEUDOROOT_SHM_FD";

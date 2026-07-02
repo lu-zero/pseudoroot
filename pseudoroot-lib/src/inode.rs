@@ -33,11 +33,7 @@ pub fn stat_at(dirfd: i32, path: *const c_char, flags: i32) -> Result<libc::stat
     let mut st = unsafe { std::mem::zeroed() };
     let pathname = if path.is_null() { c"".as_ptr() } else { path };
     let rc = unsafe { platform::real_fstatat(dirfd, pathname, &mut st, flags) };
-    if rc == 0 {
-        Ok(st)
-    } else {
-        Err(rc)
-    }
+    if rc == 0 { Ok(st) } else { Err(rc) }
 }
 
 /// Stat a path relative to `AT_FDCWD`.
@@ -54,11 +50,7 @@ pub fn lstat_path(path: *const c_char) -> Result<libc::stat, i32> {
 pub fn fstat_fd(fd: i32) -> Result<libc::stat, i32> {
     let mut st = unsafe { std::mem::zeroed() };
     let rc = unsafe { platform::real_fstat(fd, &mut st) };
-    if rc == 0 {
-        Ok(st)
-    } else {
-        Err(rc)
-    }
+    if rc == 0 { Ok(st) } else { Err(rc) }
 }
 
 /// Chown flags for `*at` syscalls mapped to `fstatat` flags.

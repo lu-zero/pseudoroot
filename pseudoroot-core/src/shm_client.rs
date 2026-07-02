@@ -1,6 +1,6 @@
 //! Client-side access to an inherited session shared-memory map.
 
-use crate::shm_map::{ShmInodeMap, SHM_FD_ENV};
+use crate::shm_map::{SHM_FD_ENV, ShmInodeMap};
 use crate::state::{FakeInode, InodeKey};
 use std::env;
 use std::sync::atomic::{AtomicBool, Ordering};

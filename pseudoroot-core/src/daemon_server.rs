@@ -1,8 +1,8 @@
 //! In-process and standalone fake-root daemon server.
 
 use crate::protocol::{
-    read_framed, write_framed, ChownPayload, InodeKeyPayload, InodeStatePayload, InodeStateResult,
-    IpcPayload, MessageType, ProtocolMessage, UidGidPayload,
+    ChownPayload, InodeKeyPayload, InodeStatePayload, InodeStateResult, IpcPayload, MessageType,
+    ProtocolMessage, UidGidPayload, read_framed, write_framed,
 };
 use crate::state::{FakeInode, FakeRootState};
 use std::fs;
@@ -10,8 +10,8 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 

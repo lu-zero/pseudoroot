@@ -70,7 +70,8 @@ listed. The agent never adds a `Signed-off-by` (DCO) — that is the human's.
 ## MSRV
 
 The workspace tracks **latest stable** dependencies and bumps `rust-version` as needed.
-Currently targeting Rust 2024 edition.
+Currently targeting Rust 2024 edition (declared as `edition = "2024"` in the root
+`Cargo.toml` and inherited via `edition.workspace = true`).
 
 CI runs `stable` and the declared workspace minimum. After a release,
 foundational crates may advertise a lower standalone MSRV; the workspace

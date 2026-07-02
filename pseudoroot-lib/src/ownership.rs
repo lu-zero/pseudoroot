@@ -1,8 +1,8 @@
 //! Shared ownership tracking helpers used by the interposed hooks.
 
 use crate::inode::{
-    fstat_fd, key_from_stat, lstat_path, resolve_path_at, resolve_stat_flags, stat_at, stat_path,
-    stat_path_buf, ID_UNCHANGED,
+    ID_UNCHANGED, fstat_fd, key_from_stat, lstat_path, resolve_path_at, resolve_stat_flags,
+    stat_at, stat_path, stat_path_buf,
 };
 use pseudoroot_core::daemon_client::{
     daemon_get_current_uid_gid, daemon_get_inode, daemon_init, daemon_mode_active,
@@ -14,13 +14,13 @@ use pseudoroot_core::shm_client::{
     shm_set_current_uid_gid, shm_upsert_chown, shm_upsert_inode,
 };
 use pseudoroot_core::state::{
-    global_state_read, global_state_write, init_global_state, FakeInode, InodeKey,
+    FakeInode, InodeKey, global_state_read, global_state_write, init_global_state,
 };
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Once;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 const ALLPERMS: u32 = 0o7777;
 const MAX_XATTR: usize = 64 * 1024;
@@ -114,15 +114,15 @@ pub(crate) fn current_fake_uid() -> u32 {
         return BOOT_UID.load(Ordering::Relaxed);
     }
     ensure_session_backing_init();
-    if shm_mode_active() {
-        if let Some((uid, _)) = shm_get_current_uid_gid() {
-            return uid;
-        }
+    if shm_mode_active()
+        && let Some((uid, _)) = shm_get_current_uid_gid()
+    {
+        return uid;
     }
-    if daemon_mode_active() {
-        if let Some((uid, _)) = daemon_get_current_uid_gid() {
-            return uid;
-        }
+    if daemon_mode_active()
+        && let Some((uid, _)) = daemon_get_current_uid_gid()
+    {
+        return uid;
     }
     global_state_read().current_uid()
 }
@@ -133,15 +133,15 @@ pub(crate) fn current_fake_gid() -> u32 {
         return BOOT_GID.load(Ordering::Relaxed);
     }
     ensure_session_backing_init();
-    if shm_mode_active() {
-        if let Some((_, gid)) = shm_get_current_uid_gid() {
-            return gid;
-        }
+    if shm_mode_active()
+        && let Some((_, gid)) = shm_get_current_uid_gid()
+    {
+        return gid;
     }
-    if daemon_mode_active() {
-        if let Some((_, gid)) = daemon_get_current_uid_gid() {
-            return gid;
-        }
+    if daemon_mode_active()
+        && let Some((_, gid)) = daemon_get_current_uid_gid()
+    {
+        return gid;
     }
     global_state_read().current_gid()
 }
@@ -166,10 +166,10 @@ fn get_inode(key: InodeKey) -> Option<FakeInode> {
     if shm_mode_active() {
         return shm_get_inode(key);
     }
-    if daemon_mode_active() {
-        if let Some(inode) = daemon_get_inode(key) {
-            return Some(inode);
-        }
+    if daemon_mode_active()
+        && let Some(inode) = daemon_get_inode(key)
+    {
+        return Some(inode);
     }
     let state = global_state_read();
     state.get_inode(key)
@@ -305,11 +305,7 @@ fn compose_mode(real_mode: u32, requested_perms: u32) -> u32 {
 #[inline]
 #[must_use]
 fn zero_on_err(result: i32) -> i32 {
-    if result < 0 {
-        0
-    } else {
-        result
-    }
+    if result < 0 { 0 } else { result }
 }
 
 // libc::mode_t is already u32 on Linux (the casts below are no-ops there) but
@@ -811,10 +807,10 @@ fn fake_getxattr(
     };
     if let Ok(st) = source.stat() {
         let key = key_from_stat(&st);
-        if let Some(inode) = get_inode(key) {
-            if let Some(stored) = inode.xattrs.get(&name_key) {
-                return write_xattr_value(stored, value, size);
-            }
+        if let Some(inode) = get_inode(key)
+            && let Some(stored) = inode.xattrs.get(&name_key)
+        {
+            return write_xattr_value(stored, value, size);
         }
     }
     real_getxattr_for(source, name, value, size)
@@ -943,9 +939,11 @@ mod tests {
         let real = b"user.foo\0system.posix_acl_access\0";
         let extra = vec!["security.capability".to_string()];
         let merged = merge_xattr_lists(real, &extra);
-        assert!(merged
-            .windows(20)
-            .any(|w| w.starts_with(b"security.capability")));
+        assert!(
+            merged
+                .windows(20)
+                .any(|w| w.starts_with(b"security.capability"))
+        );
         assert!(merged.windows(8).any(|w| w.starts_with(b"user.foo")));
     }
 }

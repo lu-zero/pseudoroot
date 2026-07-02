@@ -8,7 +8,7 @@
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use pseudoroot::FakerootCommandExt;
 use pseudoroot_core::protocol::{
-    next_request_id, IpcChannel, MessageType, ProtocolMessage, DEFAULT_SOCKET_PATH,
+    DEFAULT_SOCKET_PATH, IpcChannel, MessageType, ProtocolMessage, next_request_id,
 };
 use std::env;
 use std::ffi::OsString;

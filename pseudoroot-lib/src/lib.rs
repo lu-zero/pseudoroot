@@ -319,7 +319,12 @@ pub unsafe fn cstr_to_string(cstr: *const c_char) -> Option<String> {
     if cstr.is_null() {
         None
     } else {
-        Some(CStr::from_ptr(cstr).to_string_lossy().into_owned())
+        // SAFETY: caller guarantees `cstr` is a valid, NUL-terminated C string.
+        Some(
+            unsafe { CStr::from_ptr(cstr) }
+                .to_string_lossy()
+                .into_owned(),
+        )
     }
 }
 

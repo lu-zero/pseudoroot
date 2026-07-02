@@ -9,8 +9,8 @@ use crate::protocol::{
 };
 use crate::state::{FakeInode, InodeKey};
 use std::env;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Environment variable to specify daemon socket path
 pub const DAEMON_SOCKET_ENV: &str = "PSEUDOROOT_DAEMON_SOCKET";
@@ -190,10 +190,15 @@ mod tests {
     fn test_daemon_mode_enabled_no_env() {
         let _guard = lock_env();
         let old_var = env::var(DAEMON_SOCKET_ENV);
-        env::remove_var(DAEMON_SOCKET_ENV);
+        // SAFETY: `lock_env` serializes all env mutation in this module.
+        unsafe {
+            env::remove_var(DAEMON_SOCKET_ENV);
+        }
         assert!(!daemon_mode_enabled());
         if let Ok(var) = old_var {
-            env::set_var(DAEMON_SOCKET_ENV, var);
+            unsafe {
+                env::set_var(DAEMON_SOCKET_ENV, var);
+            }
         }
     }
 
@@ -201,12 +206,19 @@ mod tests {
     fn test_daemon_mode_enabled_with_env() {
         let _guard = lock_env();
         let old_var = env::var(DAEMON_SOCKET_ENV);
-        env::set_var(DAEMON_SOCKET_ENV, "/tmp/test.sock");
+        // SAFETY: `lock_env` serializes all env mutation in this module.
+        unsafe {
+            env::set_var(DAEMON_SOCKET_ENV, "/tmp/test.sock");
+        }
         assert!(daemon_mode_enabled());
         if let Ok(var) = old_var {
-            env::set_var(DAEMON_SOCKET_ENV, var);
+            unsafe {
+                env::set_var(DAEMON_SOCKET_ENV, var);
+            }
         } else {
-            env::remove_var(DAEMON_SOCKET_ENV);
+            unsafe {
+                env::remove_var(DAEMON_SOCKET_ENV);
+            }
         }
     }
 
@@ -214,17 +226,26 @@ mod tests {
     fn test_get_daemon_socket_path() {
         let _guard = lock_env();
         let old_var = env::var(DAEMON_SOCKET_ENV);
-        env::remove_var(DAEMON_SOCKET_ENV);
+        // SAFETY: `lock_env` serializes all env mutation in this module.
+        unsafe {
+            env::remove_var(DAEMON_SOCKET_ENV);
+        }
         assert_eq!(get_daemon_socket_path(), None);
-        env::set_var(DAEMON_SOCKET_ENV, "/tmp/custom.sock");
+        unsafe {
+            env::set_var(DAEMON_SOCKET_ENV, "/tmp/custom.sock");
+        }
         assert_eq!(
             get_daemon_socket_path(),
             Some("/tmp/custom.sock".to_string())
         );
         if let Ok(var) = old_var {
-            env::set_var(DAEMON_SOCKET_ENV, var);
+            unsafe {
+                env::set_var(DAEMON_SOCKET_ENV, var);
+            }
         } else {
-            env::remove_var(DAEMON_SOCKET_ENV);
+            unsafe {
+                env::remove_var(DAEMON_SOCKET_ENV);
+            }
         }
     }
 }
