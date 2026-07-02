@@ -31,6 +31,30 @@ INSTALL_LAST_TAR=0
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
+# Portable tool selection. The workload needs GNU install/mknod/tar semantics
+# (`install -o`, `tar --numeric-owner`) and, on macOS, unsigned binaries: SIP
+# strips DYLD_INSERT_LIBRARIES from the system `/usr/bin` tools so pseudoroot
+# can't fake them. Point everything at Homebrew's g-prefixed GNU tools via a
+# shim dir, use `gmake`, and force recipes to run under an unsigned shell so
+# the insert survives into install/mknod/tar.
+MAKE=make
+pkg_extra_args=()
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    MAKE=gmake
+    shimdir="$(mktemp -d)"
+    for pair in install:ginstall tar:gtar mknod:gmknod chown:gchown \
+                seq:gseq stat:gstat date:gdate; do
+        target="/opt/homebrew/bin/${pair#*:}"
+        if [[ ! -x "$target" ]]; then
+            echo "# macOS needs Homebrew GNU tools: brew install coreutils gnu-tar make" >&2
+            exit 1
+        fi
+        ln -sf "$target" "$shimdir/${pair%:*}"
+    done
+    export PATH="$shimdir:$PATH"
+    pkg_extra_args=(SHELL=/opt/homebrew/bin/bash)
+fi
+
 n_files="${1:-200}"
 cores="$(nproc)"
 installer_uid="$(id -u)"
@@ -115,7 +139,7 @@ start_pdrd() {
     return 1
 }
 
-trap 'stop_pdrd; rm -rf "$workdir"' EXIT
+trap 'stop_pdrd; rm -rf "$workdir" "${shimdir:-}"' EXIT
 mkdir -p "$workdir/build"
 
 gen_sources() {
@@ -174,7 +198,7 @@ wall() {
 native_build() {
     local j=$1
     scrub_build
-    wall make -f "$install_mk" -C "$workdir" N="$n_files" -j"$j" all
+    wall "$MAKE" -f "$install_mk" -C "$workdir" N="$n_files" -j"$j" all
 }
 
 run_package() {
@@ -200,9 +224,10 @@ run_package() {
     INSTALL_LAST_FILES=0
     INSTALL_LAST_TAR=0
     INSTALL_LAST_EC=0
-    INSTALL_LAST_TIME=$(wall "${wrap[@]}" make -f "$install_mk" -C "$workdir" N="$n_files" \
+    INSTALL_LAST_TIME=$(wall "${wrap[@]}" "$MAKE" -f "$install_mk" -C "$workdir" N="$n_files" \
         DESTDIR="$destdir" TARBALL="$tarball" prefix=/usr \
-        INSTALLER_UID="$installer_uid" INSTALLER_GID="$installer_gid" -j"$j" package)
+        INSTALLER_UID="$installer_uid" INSTALLER_GID="$installer_gid" \
+        "${pkg_extra_args[@]}" -j"$j" package)
     INSTALL_LAST_EC=${WALL_LAST_EC:-0}
     INSTALL_LAST_FILES=$(find "$destdir" -mindepth 1 ! -type d 2>/dev/null | wc -l)
     if [[ -f "$tarball" ]]; then

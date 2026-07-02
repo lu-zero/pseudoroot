@@ -11,6 +11,27 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
+# Portable tools: this workload's stat storm must be faked, so on macOS `make`
+# has to be an unsigned binary (SIP strips DYLD_INSERT_LIBRARIES from the
+# system `/usr/bin/make`) running its recipes under an unsigned shell, and the
+# timing needs GNU `date +%N`. Point at Homebrew's GNU tools via a shim dir.
+MAKE=make
+make_extra_args=()
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    MAKE=gmake
+    shimdir="$(mktemp -d)"
+    for pair in date:gdate stat:gstat seq:gseq; do
+        target="/opt/homebrew/bin/${pair#*:}"
+        if [[ ! -x "$target" ]]; then
+            echo "# macOS needs Homebrew GNU tools: brew install coreutils make" >&2
+            exit 1
+        fi
+        ln -sf "$target" "$shimdir/${pair%:*}"
+    done
+    export PATH="$shimdir:$PATH"
+    make_extra_args=(SHELL=/opt/homebrew/bin/bash)
+fi
+
 pseudoroot="$root/target/release/pseudoroot"
 fakeroost="$root/../fakeroost/target/release/fakeroost"
 [[ -x "$pseudoroot" ]] || cargo build --release
@@ -32,7 +53,7 @@ if [[ "${jobs[-1]}" != "$cores" ]]; then jobs+=("$cores"); fi
 
 # Self-contained scratch dir (cleaned on exit).
 workdir="$(mktemp -d)"
-trap 'rm -rf "$workdir"' EXIT
+trap 'rm -rf "$workdir" "${shimdir:-}"' EXIT
 mkdir -p "$workdir/src"
 
 gen() {
@@ -82,12 +103,12 @@ fi
 
 for j in "${jobs[@]}"; do
     gen
-    tn="$(wall make -j"$j" -f "$root/bench/Makefile" -C "$workdir" N="$n_files" all)"
+    tn="$(wall "$MAKE" -j"$j" -f "$root/bench/Makefile" -C "$workdir" N="$n_files" "${make_extra_args[@]}" all)"
     gen
-    tp="$(wall "$pseudoroot" run -- make -j"$j" -f "$root/bench/Makefile" -C "$workdir" N="$n_files" all)"
+    tp="$(wall "$pseudoroot" run -- "$MAKE" -j"$j" -f "$root/bench/Makefile" -C "$workdir" N="$n_files" "${make_extra_args[@]}" all)"
     if [[ "$have_fakeroost" -eq 1 ]]; then
         gen
-        tf="$(wall "$fakeroost" make -j"$j" -f "$root/bench/Makefile" -C "$workdir" N="$n_files" all)"
+        tf="$(wall "$fakeroost" "$MAKE" -j"$j" -f "$root/bench/Makefile" -C "$workdir" N="$n_files" "${make_extra_args[@]}" all)"
         fmt "$j" "$tn" "$tp" "$tf"
     else
         printf "%9s %14s %18s\n" "$j" "$tn" "$tp"
