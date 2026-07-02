@@ -86,7 +86,23 @@ pub fn cleanup_test_file(path: impl AsRef<Path>) {
     let _ = std::fs::remove_file(path);
 }
 
-/// Run `sh -c <script>` under pseudoroot in `dir`.
+/// Resolve the shell used to run `-c` scripts.
+///
+/// Honours `$SHELL` so macOS CI can point this at a non-SIP Homebrew bash —
+/// System Integrity Protection strips `DYLD_INSERT_LIBRARIES` from the
+/// Apple-signed `/bin/sh` and `/bin/bash`, making interposed runs flake.
+/// Falls back to `sh` everywhere else.
+fn shell() -> String {
+    env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
+}
+
+/// Run `"$SHELL" -c <script>` under pseudoroot with the given UID and GID.
+pub fn run_pseudoroot_script(script: &str, uid: u32, gid: u32) -> Output {
+    let sh = shell();
+    run_pseudoroot_command(&[sh.as_str(), "-c", script], uid, gid)
+}
+
+/// Run `"$SHELL" -c <script>` under pseudoroot in `dir`.
 ///
 /// Session supervision starts a private in-process session (SHM-backed map,
 /// or an in-process daemon thread if SHM is unavailable) for the script so
@@ -102,7 +118,7 @@ pub fn run_pseudoroot_sh(dir: &Path, script: &str) -> Output {
     }
 
     pseudoroot::init();
-    Command::new("sh")
+    Command::new(shell())
         .arg("-c")
         .arg(script)
         .current_dir(dir)

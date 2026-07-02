@@ -42,15 +42,16 @@ jobs:
         with:
           components: clippy
       # macOS System Integrity Protection strips `DYLD_INSERT_LIBRARIES` from
-      # Apple-signed binaries (`/bin/echo`, `/usr/bin/true`, …), and spawning
-      # them under interposition fails. Install GNU coreutils and put its
-      # unprefixed binaries first on `PATH` so the tests resolve non-SIP
-      # `echo`/`true`/`false`/`chown`/`id` (mirrors what the docs and macOS
-      # benchmark paths already assume).
-      - name: Install GNU coreutils (work around macOS SIP)
+      # Apple-signed binaries (`/bin/sh`, `/bin/bash`, `/bin/echo`, …), which
+      # makes interposed spawns flake on the runner. Install non-SIP Homebrew
+      # bash as `$SHELL` (the test harness runs `-c` scripts through `$SHELL`)
+      # and put GNU coreutils' unprefixed `echo`/`true`/`false`/`chown`/`id`
+      # first on `PATH` for the tests that spawn those directly.
+      - name: Install non-SIP shell and coreutils (work around macOS SIP)
         run: |
-          brew install coreutils
+          brew install bash coreutils
           echo "/opt/homebrew/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "SHELL=/opt/homebrew/bin/bash" >> "$GITHUB_ENV"
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # See the comment on the `test` job.
       - run: cargo build --workspace

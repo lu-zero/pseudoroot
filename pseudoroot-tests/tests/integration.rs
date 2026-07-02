@@ -5,6 +5,7 @@
 
 use pseudoroot_tests::{
     cleanup_test_file, create_test_file, find_pdr_bin, find_pseudoroot_lib, run_pseudoroot_command,
+    run_pseudoroot_script,
 };
 use std::process::Command;
 use std::str;
@@ -68,11 +69,7 @@ fn test_pseudoroot_runs_simple_command() {
 /// Test environment variable passing through pseudoroot
 #[test]
 fn test_environment_variables() {
-    let output = run_pseudoroot_command(
-        &["sh", "-c", r"echo $PSEUDOROOT_UID $PSEUDOROOT_GID"],
-        999,
-        888,
-    );
+    let output = run_pseudoroot_script(r"echo $PSEUDOROOT_UID $PSEUDOROOT_GID", 999, 888);
 
     assert!(
         output.status.success(),
@@ -109,11 +106,7 @@ fn test_exit_status_preserved() {
 /// Test running commands with custom UID/GID
 #[test]
 fn test_custom_uid_gid_in_command() {
-    let output = run_pseudoroot_command(
-        &["sh", "-c", r"echo $PSEUDOROOT_UID $PSEUDOROOT_GID"],
-        1234,
-        5678,
-    );
+    let output = run_pseudoroot_script(r"echo $PSEUDOROOT_UID $PSEUDOROOT_GID", 1234, 5678);
 
     assert!(output.status.success());
 
@@ -207,7 +200,7 @@ fn test_id_command() {
 /// Test that we can chain multiple commands
 #[test]
 fn test_chained_commands() {
-    let output = run_pseudoroot_command(&["sh", "-c", "echo hello && echo world"], 0, 0);
+    let output = run_pseudoroot_script("echo hello && echo world", 0, 0);
 
     assert!(output.status.success());
 
