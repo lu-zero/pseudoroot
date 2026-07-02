@@ -255,6 +255,40 @@ pub extern "C" fn fstatat(
     result
 }
 
+/// LFS aliases. Binaries built with `_FILE_OFFSET_BITS=64` against glibc ≥ 2.33
+/// bind the `*64` symbols directly (e.g. bzip2, which preserves ownership by
+/// stat64-ing the original and chowning the copy — an uninterposed read here
+/// makes the hooked chown faithfully record the *real* owner). On 64-bit Linux
+/// `struct stat64` is layout-identical to `struct stat`, so forward as-is.
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn stat64(path: *const c_char, buf: *mut libc::stat) -> i32 {
+    stat(path, buf)
+}
+
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn fstat64(fd: i32, buf: *mut libc::stat) -> i32 {
+    fstat(fd, buf)
+}
+
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn lstat64(path: *const c_char, buf: *mut libc::stat) -> i32 {
+    lstat(path, buf)
+}
+
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn fstatat64(
+    dirfd: i32,
+    pathname: *const c_char,
+    buf: *mut libc::stat,
+    flags: i32,
+) -> i32 {
+    fstatat(dirfd, pathname, buf, flags)
+}
+
 /// Extended stat (Linux-specific)
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
