@@ -95,14 +95,23 @@ Nothing is written to disk for ownership: `chown` records fake uid/gid in the in
 | `pseudoroot-tests` | Integration, CLI, and interposition tests |
 
 **Platform support:** Linux is fully supported (all syscall families below,
-default session mode backed by a shared-memory inode map). macOS builds and
-covers credentials, `stat`/`lstat`/`fstat`, `chown`/`lchown`/`fchown`,
-`chmod`/`fchmod`, and `unlink`/`rmdir`/`rename`; the `*at`-suffixed family
-(`fstatat`, `fchmodat`, `fchownat`, `unlinkat`, `renameat`, `renameat2`),
-`statx`, `mknod`/`mknodat`, and the `*xattr` family are currently Linux-only
-— see [`todo/macos.md`](todo/macos.md) for the plan to close that gap. CI
-only runs on Linux today, so macOS changes are type-checked (`cargo check
---target x86_64-apple-darwin`) but not yet exercised on real hardware in CI.
+default session mode backed by a shared-memory inode map). macOS interposes
+via `DYLD_INSERT_LIBRARIES` and a `__DATA,__interpose` table, and covers
+credentials, `stat`/`lstat`/`fstat`, `chown`/`lchown`/`fchown`,
+`chmod`/`fchmod`, and `unlink`/`rmdir`/`rename`, with the same shared-memory
+session mode as Linux (backed by `shm_open` rather than `memfd_create`). The
+`*at`-suffixed family (`fstatat`, `fchmodat`, `fchownat`, `unlinkat`,
+`renameat`, `renameat2`), `statx`, `mknod`/`mknodat`, and the `*xattr` family
+are currently Linux-only — see [`todo/macos.md`](todo/macos.md) for the plan
+to close that gap.
+
+macOS System Integrity Protection strips `DYLD_INSERT_LIBRARIES` from
+Apple-signed binaries (`/bin/sh`, `/usr/bin/id`, the system coreutils …), so
+those cannot be faked; interposition only applies to binaries you build or
+install yourself. The test suite exercises macOS through freshly built
+helpers for exactly this reason. CI runs on Linux today, so macOS is
+type-checked in CI (`cargo check --target x86_64-apple-darwin`) and the full
+suite passes on real Apple hardware locally.
 
 ### Interposed syscall families
 
@@ -160,7 +169,7 @@ See `bench/stat-loop` for the raw stat-loop harness.
 | Platforms | Linux, macOS | Linux | Linux |
 | xattr / setcap | Faked | Faked | Faked |
 | mknod unprivileged | Placeholder + fake metadata | Yes | Yes |
-| Multi-process state | SHM session or daemon (`pdrd`) | `faked` | N/A (single run) |
+| Multi-process state | SHM session (Linux + macOS) or daemon (`pdrd`) | `faked` | N/A (single run) |
 | Rust API | `FakerootCommandExt` | C only | `FakerootCommandExt` |
 
 ## License
