@@ -21,6 +21,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
+      # pseudoroot-lib is a cdylib with no Cargo dependents (pseudoroot-tests
+      # finds it at runtime by scanning target/{debug,release}, not via a
+      # `[dependencies]` edge) and its own unit tests are disabled, so
+      # `cargo test --workspace` alone never builds it. Build the workspace
+      # explicitly first, as AGENTS.md's documented dev flow does.
+      - run: cargo build --workspace
       - run: cargo test --workspace
 
   test-macos:
@@ -32,6 +38,9 @@ jobs:
         with:
           components: clippy
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # See the comment on the `test` job: pseudoroot-lib's cdylib artifact
+      # needs an explicit build before the test binaries can find it.
+      - run: cargo build --workspace
       - run: cargo test --workspace
 
   clippy:
@@ -63,6 +72,11 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
+      # See the comment on the `test` job: pseudoroot-lib's cdylib artifact
+      # needs an explicit build (llvm-cov's own --target-dir override for the
+      # instrumented test binaries doesn't help here, since the test harness
+      # looks for the library under the plain `target/{debug,release}`).
+      - run: cargo build -p pseudoroot-lib
       - run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
       - uses: codecov/codecov-action@v5
         with:
