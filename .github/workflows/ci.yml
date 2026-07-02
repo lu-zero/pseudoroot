@@ -25,7 +25,11 @@ jobs:
       # finds it at runtime by scanning target/{debug,release}, not via a
       # `[dependencies]` edge) and its own unit tests are disabled, so
       # `cargo test --workspace` alone never builds it. Build the workspace
-      # explicitly first, as AGENTS.md's documented dev flow does.
+      # explicitly first, as AGENTS.md's documented dev flow does. Note:
+      # `pseudoroot`'s build.rs (which embeds pseudoroot-lib's cdylib into
+      # the `pdr` binary) builds pseudoroot-lib too, but into an isolated
+      # OUT_DIR-scoped target-dir, not target/{debug,release} — it doesn't
+      # satisfy pseudoroot-tests's scan, so this step is still required.
       - run: cargo build --workspace
       - run: cargo test --workspace
 
@@ -38,8 +42,7 @@ jobs:
         with:
           components: clippy
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      # See the comment on the `test` job: pseudoroot-lib's cdylib artifact
-      # needs an explicit build before the test binaries can find it.
+      # See the comment on the `test` job.
       - run: cargo build --workspace
       - run: cargo test --workspace
 
@@ -73,9 +76,10 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
       # See the comment on the `test` job: pseudoroot-lib's cdylib artifact
-      # needs an explicit build (llvm-cov's own --target-dir override for the
-      # instrumented test binaries doesn't help here, since the test harness
-      # looks for the library under the plain `target/{debug,release}`).
+      # needs an explicit build under target/{debug,release} (llvm-cov's own
+      # --target-dir override for the instrumented test binaries doesn't
+      # help here, nor does pseudoroot's build.rs embed step — both build
+      # pseudoroot-lib into a different tree than what the test harness scans).
       - run: cargo build -p pseudoroot-lib
       - run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
       - uses: codecov/codecov-action@v5

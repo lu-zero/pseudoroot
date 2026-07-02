@@ -13,16 +13,21 @@ if they had root privileges without requiring real root access.
 ```bash
 cargo install --path pseudoroot
 
-# Implicit run (fakeroot-style, via the `pdr` short name)
+# Implicit run (fakeroot-style)
 pdr -- id
 
-# Explicit subcommands (via the `pseudoroot` main name)
-pseudoroot run -- id
-pseudoroot --uid 1000 --gid 1000 -- id
+# Explicit subcommand form (equivalent)
+pdr run -- id
+pdr --uid 1000 --gid 1000 -- id
 ```
 
-Short binary names: `pdr` (CLI) and `pdrd` (daemon), alongside
-`pseudoroot` and `pseudoroot-daemon`.
+`pdr` is a single self-contained binary — the interposed library is embedded
+at build time and extracted to a cache directory on first use, so no
+`libpseudoroot_lib.so`/`.dylib` needs to exist anywhere on disk beforehand.
+`pdr start` runs the optional persistent daemon in-process, so no separate
+`pdrd` binary is needed for that either; a standalone `pdrd` is still
+available (see [Build and test](#build-and-test)) as a dedicated daemon
+process for external orchestration.
 
 ## CLI options
 
@@ -41,9 +46,9 @@ By default each invocation gets its own session, shared across `exec`
 within it. To share state across separate invocations, use a daemon:
 
 ```bash
-pdrd -s /tmp/pseudoroot.sock          # start daemon
+pdr start --socket-path /tmp/pseudoroot.sock   # daemon runs in-process
 pdr --daemon --socket-path /tmp/pseudoroot.sock -- make install
-pseudoroot stop --socket-path /tmp/pseudoroot.sock
+pdr stop --socket-path /tmp/pseudoroot.sock
 ```
 
 ## Rust API (fakeroost-compatible)
@@ -68,10 +73,12 @@ fn main() {
 ## Environment variables
 
 - `PSEUDOROOT_UID` / `PSEUDOROOT_GID` — fake uid/gid (default: 0)
-- `PSEUDOROOT_DAEMON_SOCKET` — attach to an existing `pdrd` (skips session auto-start)
+- `PSEUDOROOT_DAEMON_SOCKET` — attach to an existing daemon (skips session auto-start)
 - `PSEUDOROOT_STANDALONE` — per-process state only (no session)
 - `PSEUDOROOT_SESSION_SHM` — set to `0` to use an in-process daemon thread instead of the shared-memory map for session mode
-- `PSEUDOROOT_LIB` — override interposed library path (tests, custom installs)
+- `PSEUDOROOT_LIB` — override the interposed library path, bypassing the
+  embedded copy entirely (tests, custom installs, debugging a locally built
+  `pseudoroot-lib`)
 
 ## Documentation
 
@@ -102,8 +109,11 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-The shared library is at `target/{debug,release}/libpseudoroot_lib.so`
-(Linux) or `.dylib` (macOS).
+`cargo build -p pseudoroot` nests a `cargo build -p pseudoroot-lib`
+invocation (see `pseudoroot/build.rs`) to embed the interposed library into
+the `pdr` binary — no separate install step needed. For a standalone `pdrd`
+daemon binary, build the `pseudoroot-daemon` package directly:
+`cargo build -p pseudoroot-daemon`.
 
 ## License
 
