@@ -24,9 +24,14 @@ use pseudoroot_core::shm_map::{ShmInodeMap, SHM_FD_ENV, SHM_LEN_ENV};
 pub const SESSION_SHM_ENV: &str = "PSEUDOROOT_SESSION_SHM";
 use std::env;
 use std::ffi::OsString;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use tempfile::TempDir;
+
+/// The interposed library, embedded at build time by `build.rs`.
+static EMBEDDED_LIB: &[u8] = include_bytes!(env!("PSEUDOROOT_LIB_EMBED_PATH"));
 
 mod sealed {
     pub trait Sealed {}
@@ -108,7 +113,8 @@ fn supervise_ctor() {
     init();
 }
 
-/// Locate the interposed shared library.
+/// Locate the interposed shared library, extracting the embedded copy to a
+/// cache directory on first use.
 #[must_use]
 pub fn library_path() -> Option<PathBuf> {
     if let Ok(path) = env::var(LIB_PATH_ENV) {
@@ -118,32 +124,69 @@ pub fn library_path() -> Option<PathBuf> {
         }
     }
 
-    let mut candidates = Vec::new();
+    match extract_embedded_lib() {
+        Ok(path) => Some(path),
+        Err(err) => {
+            eprintln!(
+                "pseudoroot: failed to extract embedded library: {err} \
+                 (set {LIB_PATH_ENV} to override)"
+            );
+            None
+        }
+    }
+}
 
-    if let Ok(exe_path) = env::current_exe() {
-        let exe_dir = exe_path.parent().unwrap_or_else(|| Path::new("/"));
-        candidates.push(exe_dir.join("../libpseudoroot_lib.so"));
-        candidates.push(exe_dir.join("../libpseudoroot_lib.dylib"));
-        candidates.push(exe_dir.join("libpseudoroot_lib.so"));
-        candidates.push(exe_dir.join("libpseudoroot_lib.dylib"));
+/// Root directory for cached extracted assets.
+///
+/// Always the Linux/XDG-style path, regardless of platform: `$XDG_CACHE_HOME`
+/// if set, else `$HOME/.cache`, else `std::env::temp_dir()` as a last resort.
+/// Preferring the user's cache dir over `/tmp` matters beyond tidiness: `/tmp`
+/// is frequently mounted `noexec` (hardened distros, containers), which blocks
+/// `mmap(PROT_EXEC)` there — exactly what `dlopen()`/`LD_PRELOAD` needs.
+/// `~/.cache` is essentially never `noexec`.
+fn cache_root() -> PathBuf {
+    if let Ok(xdg) = env::var("XDG_CACHE_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg);
+        }
+    }
+    if let Ok(home) = env::var("HOME") {
+        return PathBuf::from(home).join(".cache");
+    }
+    env::temp_dir()
+}
+
+/// Extract [`EMBEDDED_LIB`] to a content-hash-keyed cache path, skipping the
+/// write if it's already there.
+fn extract_embedded_lib() -> io::Result<PathBuf> {
+    let lib_name = if cfg!(target_os = "macos") {
+        "libpseudoroot_lib.dylib"
+    } else {
+        "libpseudoroot_lib.so"
+    };
+
+    let mut hasher = DefaultHasher::new();
+    EMBEDDED_LIB.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    let mut dir = cache_root().join("pseudoroot").join("embed");
+    // /tmp is shared/1777; ~/.cache is already private, so only the temp_dir
+    // fallback needs a uid segment to avoid cross-user permission contention.
+    if dir.starts_with(env::temp_dir()) {
+        dir = dir.join(format!("uid-{}", unsafe { libc::getuid() }));
+    }
+    let dir = dir.join(format!("{hash:016x}"));
+    let path = dir.join(lib_name);
+
+    if path.exists() {
+        return Ok(path);
     }
 
-    candidates.extend(
-        [
-            "target/cbuild/release/libpseudoroot_lib.so",
-            "target/cbuild/debug/libpseudoroot_lib.so",
-            "target/debug/libpseudoroot_lib.so",
-            "target/debug/libpseudoroot_lib.dylib",
-            "target/release/libpseudoroot_lib.so",
-            "target/release/libpseudoroot_lib.dylib",
-            "target/debug/libpseudoroot-lib.so",
-            "target/release/libpseudoroot-lib.so",
-        ]
-        .iter()
-        .map(PathBuf::from),
-    );
-
-    candidates.into_iter().find(|candidate| candidate.exists())
+    std::fs::create_dir_all(&dir)?;
+    let tmp_path = dir.join(format!(".{lib_name}.{}.tmp", std::process::id()));
+    std::fs::write(&tmp_path, EMBEDDED_LIB)?;
+    std::fs::rename(&tmp_path, &path)?; // atomic on POSIX
+    Ok(path)
 }
 
 fn session_supervision_enabled(cmd: &Command) -> bool {
