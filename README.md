@@ -34,6 +34,8 @@ Short binary names: `pdr` (CLI) and `pdrd` (daemon), alongside
 | `--socket-path <PATH>` | Daemon socket path | `/tmp/pseudoroot.sock` |
 | `start` / `stop` / `status` | Manage the daemon | — |
 | `print-library-path` | Print the interposed library path | — |
+| `start --verbose` | Enable verbose daemon logging | off |
+| `start --cleanup` | Clean up socket file on daemon exit | off |
 
 By default each invocation gets its own session, shared across `exec`
 within it. To share state across separate invocations, use a daemon:
@@ -76,8 +78,9 @@ fn main() {
 - [Architecture](docs/architecture.md) — crate layout, inode-keyed state
   model, platform support, interposed syscall families.
 - [Benchmarks](docs/benchmarks.md) — comparison against native,
-  `fakeroot`, and `fakeroost`; on a 128-core machine pseudoroot sustains
-  ~7.4M faked `stat()` calls/sec vs fakeroot's ~44.5K.
+  `fakeroot`, and `fakeroost`; on a 128-core Linux machine pseudoroot sustains
+  ~7.4M faked `stat()` calls/sec vs fakeroot's ~44.5K, and on a MacBook Pro
+  with M2 Max (12-core ARM64) ~899K calls/sec vs fakeroot's ~43K.
 
 ## Comparison
 
