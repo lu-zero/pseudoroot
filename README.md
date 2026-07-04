@@ -2,7 +2,10 @@
 
 [![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
 [![Build Status](https://github.com/lu-zero/pseudoroot/workflows/CI/badge.svg)](https://github.com/lu-zero/pseudoroot/actions?query=workflow:CI)
+[![codecov](https://codecov.io/gh/lu-zero/pseudoroot/graph/badge.svg)](https://codecov.io/gh/lu-zero/pseudoroot)
+[![Crates.io](https://img.shields.io/crates/v/pseudoroot.svg)](https://crates.io/crates/pseudoroot)
 [![dependency status](https://deps.rs/repo/github/lu-zero/pseudoroot/status.svg)](https://deps.rs/repo/github/lu-zero/pseudoroot)
+[![docs.rs](https://docs.rs/pseudoroot/badge.svg)](https://docs.rs/pseudoroot)
 
 A Rust implementation of fakeroot using library interposition
 (`LD_PRELOAD` on Linux, `DYLD_INSERT_LIBRARIES` on macOS). Commands run as
