@@ -1,7 +1,21 @@
-//! Core types and state management for pseudoroot
+//! Shared state, IPC, and session backing for pseudoroot.
 //!
-//! This crate provides the shared data structures and state management
-//! for the pseudoroot library interposition system.
+//! Both the CLI/API crate (`pseudoroot`) and the interposed cdylib
+//! (`pseudoroot-lib`) depend on this crate. It owns the inode-keyed fake
+//! metadata model and the two multi-process backends:
+//!
+//! - [`shm_map`] / [`shm_client`] — lock-free shared-memory hash table inherited
+//!   across `exec` within a session (default).
+//! - [`daemon_server`] / [`daemon_client`] — Unix-socket RPC for external or
+//!   in-process daemons (`pdrd`, `pdr start`, or `PSEUDOROOT_SESSION_SHM=0`).
+//!
+//! Per-process fallback lives in [`state`] (`global_state_read` /
+//! `global_state_write`), used when neither SHM nor daemon mode is active.
+//!
+//! See [the architecture guide](https://github.com/lu-zero/pseudoroot/blob/master/docs/architecture.md)
+//! for end-to-end flows and backend selection.
+
+#![deny(missing_docs)]
 
 pub mod daemon_client;
 pub mod daemon_server;

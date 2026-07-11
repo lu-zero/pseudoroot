@@ -217,51 +217,77 @@ pub trait IpcPayload: Serialize + for<'a> Deserialize<'a> {
 
 impl<T: Serialize + for<'a> Deserialize<'a>> IpcPayload for T {}
 
-/// Inode identity payload
+/// Inode identity payload for lookup and removal RPCs.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct InodeKeyPayload {
+    /// Filesystem device id (`st_dev`).
     pub dev: u64,
+    /// Inode number (`st_ino`).
     pub ino: u64,
 }
 
-/// Inode state registration payload
+/// Full inode metadata sent with [`MessageType::RegisterOwnership`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InodeStatePayload {
+    /// Filesystem device id (`st_dev`).
     pub dev: u64,
+    /// Inode number (`st_ino`).
     pub ino: u64,
+    /// Fake owner uid.
     pub uid: u32,
+    /// Fake owner gid.
     pub gid: u32,
+    /// Fake mode (type + permission bits), if set.
     pub mode: Option<u32>,
+    /// Fake device id for device nodes, if set.
     pub rdev: Option<u64>,
+    /// Faked extended attributes.
     pub xattrs: HashMap<String, Vec<u8>>,
 }
 
-/// Inode state query result
+/// Result of [`MessageType::GetOwnership`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InodeStateResult {
+    /// Whether an entry exists for the requested inode key.
     pub found: bool,
+    /// Fake owner uid (meaningful only when `found` is true).
     pub uid: u32,
+    /// Fake owner gid (meaningful only when `found` is true).
     pub gid: u32,
+    /// Fake mode, if recorded.
     pub mode: Option<u32>,
+    /// Fake device id, if recorded.
     pub rdev: Option<u64>,
+    /// Faked extended attributes.
     pub xattrs: HashMap<String, Vec<u8>>,
 }
 
-/// UID/GID payload
+/// Current fake uid/gid for credential RPCs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UidGidPayload {
+    /// Fake uid.
     pub uid: u32,
+    /// Fake gid.
     pub gid: u32,
 }
 
-/// Chown merge payload (`uid`/`gid` of `u32::MAX` leave that field unchanged).
+/// Chown merge payload for [`MessageType::UpsertChown`].
+///
+/// `uid`/`gid` of `u32::MAX` ([`crate::state::FakeRootState::ID_UNCHANGED`])
+/// leave that field unchanged. `default_uid`/`default_gid` seed a new entry.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ChownPayload {
+    /// Filesystem device id (`st_dev`).
     pub dev: u64,
+    /// Inode number (`st_ino`).
     pub ino: u64,
+    /// New uid, or `u32::MAX` to keep the existing value.
     pub uid: u32,
+    /// New gid, or `u32::MAX` to keep the existing value.
     pub gid: u32,
+    /// Default uid when creating a new inode entry.
     pub default_uid: u32,
+    /// Default gid when creating a new inode entry.
     pub default_gid: u32,
 }
 

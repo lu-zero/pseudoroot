@@ -85,8 +85,9 @@ fn main() {
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — crate layout, inode-keyed state
-  model, platform support, interposed syscall families.
+- [Architecture](docs/architecture.md) — crate and module map, state backends
+  (SHM session, daemon, standalone), session lifecycle, IPC protocol, SHM
+  layout, platform differences, and a guide for extending interposition.
 - [Benchmarks](docs/benchmarks.md) — comparison against native,
   `fakeroot`, and `fakeroost`; on a 128-core Linux machine pseudoroot sustains
   ~7.4M faked `stat()` calls/sec vs fakeroot's ~44.5K, and on a MacBook Pro

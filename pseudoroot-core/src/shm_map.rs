@@ -252,18 +252,21 @@ impl ShmInodeMap {
         self.len
     }
 
+    /// Read the current fake uid from the map header.
     #[inline]
     #[must_use]
     pub fn current_uid(&self) -> u32 {
         self.header().current_uid.load(Ordering::Relaxed)
     }
 
+    /// Read the current fake gid from the map header.
     #[inline]
     #[must_use]
     pub fn current_gid(&self) -> u32 {
         self.header().current_gid.load(Ordering::Relaxed)
     }
 
+    /// Store the current fake uid/gid in the map header.
     #[inline]
     pub fn set_current(&self, uid: u32, gid: u32) {
         let header = self.header();
@@ -271,6 +274,7 @@ impl ShmInodeMap {
         header.current_gid.store(gid, Ordering::Relaxed);
     }
 
+    /// Look up fake metadata for an inode key.
     #[must_use]
     pub fn get_inode(&self, key: InodeKey) -> Option<FakeInode> {
         let (dev, ino) = key;
@@ -289,6 +293,10 @@ impl ShmInodeMap {
         Some(inode)
     }
 
+    /// Merge a chown into the table, creating an entry when absent.
+    ///
+    /// `uid`/`gid` of `u32::MAX` leave that field unchanged on an existing
+    /// entry. `default_uid`/`default_gid` seed a new slot.
     pub fn upsert_chown(
         &self,
         key: InodeKey,
