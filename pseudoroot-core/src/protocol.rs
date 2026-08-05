@@ -4,11 +4,23 @@
 //! for communication between the interposed library and the daemon process.
 
 use serde::{Deserialize, Serialize};
+use serde_wincode::SerdeCompat;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use wincode::{Deserialize as WincodeDeserialize, Serialize as WincodeSerialize};
+
+/// Serialize `value` with the bincode-compatible wincode encoding.
+fn serialize_wincode<T: Serialize>(value: &T) -> Vec<u8> {
+    <SerdeCompat<T> as WincodeSerialize>::serialize(value).expect("Failed to serialize message")
+}
+
+/// Deserialize a value previously produced by [`serialize_wincode`].
+fn deserialize_wincode<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Option<T> {
+    <SerdeCompat<T> as WincodeDeserialize>::deserialize(bytes).ok()
+}
 
 /// Default socket path for daemon communication
 pub const DEFAULT_SOCKET_PATH: &str = "/tmp/pseudoroot.sock";
@@ -96,12 +108,12 @@ impl ProtocolMessage {
     /// Serialize the message to bytes
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        bincode::serialize(self).expect("Failed to serialize message")
+        serialize_wincode(self)
     }
 
     /// Deserialize a message from bytes
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        bincode::deserialize(bytes).ok()
+        deserialize_wincode(bytes)
     }
 }
 
@@ -206,12 +218,12 @@ impl Default for IpcChannel {
 pub trait IpcPayload: Serialize + for<'a> Deserialize<'a> {
     /// Convert to payload bytes
     fn to_payload(&self) -> Vec<u8> {
-        bincode::serialize(self).expect("Failed to serialize payload")
+        serialize_wincode(self)
     }
 
     /// Convert from payload bytes
     fn from_payload(bytes: &[u8]) -> Option<Self> {
-        bincode::deserialize(bytes).ok()
+        deserialize_wincode(bytes)
     }
 }
 
@@ -317,7 +329,7 @@ mod tests {
             xattrs: HashMap::from([("security.capability".to_string(), vec![1, 2, 3])]),
         };
         let bytes = payload.to_payload();
-        let decoded: InodeStatePayload = bincode::deserialize(&bytes).unwrap();
+        let decoded: InodeStatePayload = deserialize_wincode(&bytes).unwrap();
         assert_eq!(decoded.dev, 1);
         assert_eq!(decoded.ino, 42);
         assert_eq!(decoded.uid, 1000);

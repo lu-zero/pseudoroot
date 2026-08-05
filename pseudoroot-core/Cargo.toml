@@ -14,7 +14,8 @@ description = "Inode-keyed fake-root state, daemon IPC protocol, and shared-memo
 documentation = "https://docs.rs/pseudoroot-core"
 
 [dependencies]
-bincode.workspace = true
 dashmap.workspace = true
 libc.workspace = true
 serde.workspace = true
+serde-wincode.workspace = true
+wincode.workspace = true

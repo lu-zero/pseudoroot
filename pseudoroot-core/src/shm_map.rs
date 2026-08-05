@@ -9,14 +9,16 @@
 //!
 //! Layout: `Header | Slot[slot_count] | XattrPage[slot_count]`. Each slot has a
 //! dedicated `XATTR_PAGE_SIZE`-byte page (indexed the same way as its `Slot`)
-//! holding a bincode-serialized `xattrs` map; entries that don't fit are dropped
+//! holding a wincode-serialized `xattrs` map; entries that don't fit are dropped
 //! (with a warning) rather than corrupting the table.
 
 use crate::state::{FakeInode, InodeKey};
+use serde_wincode::SerdeCompat;
 use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use wincode::{Deserialize as WincodeDeserialize, Serialize as WincodeSerialize};
 
 /// Environment variable holding the inherited memfd file descriptor.
 pub const SHM_FD_ENV: &str = "PSEUDOROOT_SHM_FD";
@@ -28,7 +30,7 @@ const SHM_MAGIC: u32 = 0x5044_5253; // "PDRS"
 const SHM_VERSION: u32 = 3;
 const ID_UNCHANGED: u32 = u32::MAX;
 
-/// Per-slot inline storage for a bincode-serialized xattr map.
+/// Per-slot inline storage for a wincode-serialized xattr map.
 const XATTR_PAGE_SIZE: usize = 4096;
 
 /// Slot has never been used.
@@ -428,7 +430,7 @@ impl ShmInodeMap {
             page[..4].copy_from_slice(&0u32.to_le_bytes());
             return;
         }
-        let fits = bincode::serialize(xattrs)
+        let fits = <SerdeCompat<HashMap<String, Vec<u8>>> as WincodeSerialize>::serialize(xattrs)
             .ok()
             .filter(|bytes| bytes.len() <= XATTR_PAGE_SIZE - 4);
         match fits {
@@ -451,7 +453,10 @@ impl ShmInodeMap {
         if len == 0 || len > XATTR_PAGE_SIZE - 4 {
             return HashMap::new();
         }
-        bincode::deserialize(&page[4..4 + len]).unwrap_or_default()
+        <SerdeCompat<HashMap<String, Vec<u8>>> as WincodeDeserialize>::deserialize(
+            &page[4..4 + len],
+        )
+        .unwrap_or_default()
     }
 
     fn init_header(&self, uid: u32, gid: u32) {
