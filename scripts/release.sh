@@ -143,8 +143,11 @@ fi
 confirm "push $branch and tag v$new_version to origin?" || exit 0
 git push origin "$branch" "v$new_version"
 
+# pseudoroot-daemon and pseudoroot both depend on pseudoroot-core but not on
+# each other, so pseudoroot-core must land first; the other two can publish
+# in either order once it's visible.
 if [[ "$do_publish" -eq 0 ]]; then
-    echo "# next: cargo publish -p pseudoroot-core, wait for it on crates.io, then cargo publish -p pseudoroot"
+    echo "# next: cargo publish -p pseudoroot-core, wait for it on crates.io, then cargo publish -p pseudoroot-daemon and cargo publish -p pseudoroot"
     exit 0
 fi
 
@@ -160,10 +163,15 @@ for _ in $(seq 1 30); do
 done
 if ! cargo info "pseudoroot-core@$new_version" >/dev/null 2>&1; then
     echo "error: pseudoroot-core $new_version still not visible on crates.io after 2.5 minutes" >&2
-    echo "       retry manually once it lands: cargo publish -p pseudoroot" >&2
+    echo "       retry manually once it lands: cargo publish -p pseudoroot-daemon && cargo publish -p pseudoroot" >&2
     exit 1
 fi
 
-confirm "publish pseudoroot $new_version to crates.io?" || exit 0
-cargo publish -p pseudoroot
-echo "# published pseudoroot-core and pseudoroot $new_version"
+published=(pseudoroot-core)
+for pkg in pseudoroot-daemon pseudoroot; do
+    if confirm "publish $pkg $new_version to crates.io?"; then
+        cargo publish -p "$pkg"
+        published+=("$pkg")
+    fi
+done
+echo "# published: ${published[*]} @ $new_version"
