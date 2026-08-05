@@ -109,7 +109,7 @@ pub fn init() {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn supervise_ctor() {
     init();
 }

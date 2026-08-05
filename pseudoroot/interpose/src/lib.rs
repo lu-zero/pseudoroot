@@ -48,7 +48,7 @@ use std::os::raw::c_char;
 ///
 /// This function is called automatically when the library is loaded,
 /// thanks to the `ctor` crate.
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 unsafe fn init() {
     let uid = std::env::var("PSEUDOROOT_UID")
         .ok()
