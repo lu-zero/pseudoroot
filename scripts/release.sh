@@ -80,8 +80,10 @@ fi
 
 echo "# bumping $old_version -> $new_version"
 
-restore_on_failure() {
-    echo "error: verification failed, reverting version bump" >&2
+branch="$(git branch --show-current)"
+
+revert_bump() { # <reason>
+    echo "$1 — reverting version bump" >&2
     git checkout -- Cargo.toml pseudoroot/build.rs
 }
 
@@ -91,8 +93,7 @@ bump() { # <file> <sed-expr> <description>
     sed -i "$2" "$1"
     after="$(git diff --stat -- "$1")"
     if [[ "$before" == "$after" ]]; then
-        echo "error: expected to bump $3 in $1 but nothing changed (pattern out of date?)" >&2
-        restore_on_failure
+        revert_bump "error: expected to bump $3 in $1 but nothing changed (pattern out of date?)"
         exit 1
     fi
 }
@@ -110,15 +111,18 @@ if [[ -n "$leftover" ]]; then
 fi
 
 echo "# verifying: build, clippy, test"
-if ! cargo build --workspace --all-targets \
+if ! { cargo build --workspace --all-targets \
     && cargo clippy --workspace --all-targets -- -D warnings \
-    && cargo test --workspace; then
-    restore_on_failure
+    && cargo test --workspace; }; then
+    revert_bump "error: verification failed"
     exit 1
 fi
 
 git diff -- Cargo.toml pseudoroot/build.rs
-confirm "commit this as 'chore: bump to $new_version'?" || { restore_on_failure; exit 1; }
+if ! confirm "commit this as 'chore: bump to $new_version'?"; then
+    revert_bump "aborted"
+    exit 1
+fi
 
 git add Cargo.toml pseudoroot/build.rs
 commit_body="chore: bump to $new_version"
@@ -132,12 +136,12 @@ git tag -a "v$new_version" -m "v$new_version"
 echo "# committed and tagged v$new_version"
 
 if [[ "$do_push" -eq 0 ]]; then
-    echo "# next: git push origin \$(git branch --show-current) v$new_version"
+    echo "# next: git push origin $branch v$new_version"
     exit 0
 fi
 
-confirm "push \$(git branch --show-current) and tag v$new_version to origin?" || exit 0
-git push origin "$(git branch --show-current)" "v$new_version"
+confirm "push $branch and tag v$new_version to origin?" || exit 0
+git push origin "$branch" "v$new_version"
 
 if [[ "$do_publish" -eq 0 ]]; then
     echo "# next: cargo publish -p pseudoroot-core, wait for it on crates.io, then cargo publish -p pseudoroot"
