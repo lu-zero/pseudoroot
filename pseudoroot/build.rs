@@ -32,18 +32,15 @@ fn try_main() -> Result<(), String> {
     let interpose = manifest_dir.join("interpose");
     let gen_dir = out_dir.join("interpose-pkg");
 
-    // (Re)generate the throwaway package: copy the bundled source + version
-    // script, and write a manifest + build script that pins `statx` to
-    // `GLIBC_2.28` and re-exports the rest (`--export-dynamic`).
+    // (Re)generate the throwaway package: copy the bundled source and write a
+    // manifest for it. No linker version script is needed: rustc already
+    // exports every `#[no_mangle]` symbol from a cdylib, and adding our own
+    // script on top breaks GNU ld ("anonymous version tag cannot be combined
+    // with other version tags").
     if gen_dir.exists() {
         fs::remove_dir_all(&gen_dir).map_err(|e| format!("clean {gen_dir:?}: {e}"))?;
     }
     copy_dir(&interpose.join("src"), &gen_dir.join("src"))?;
-    fs::copy(
-        interpose.join("pseudoroot.lds"),
-        gen_dir.join("pseudoroot.lds"),
-    )
-    .map_err(|e| format!("copy version script: {e}"))?;
 
     let mut manifest = MANIFEST.to_string();
     // During in-workspace development `pseudoroot-core` is not on any registry,
@@ -60,8 +57,6 @@ fn try_main() -> Result<(), String> {
         ));
     }
     fs::write(gen_dir.join("Cargo.toml"), manifest).map_err(|e| format!("write manifest: {e}"))?;
-    fs::write(gen_dir.join("build.rs"), EMBED_BUILD_SCRIPT)
-        .map_err(|e| format!("write build script: {e}"))?;
 
     let embed_target_dir = out_dir.join("embed-target");
     let mut cmd = Command::new(&cargo);
@@ -107,10 +102,6 @@ fn try_main() -> Result<(), String> {
 
     // Without these, editing the bundled source wouldn't rerun this script.
     println!("cargo:rerun-if-changed={}", interpose.join("src").display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        interpose.join("pseudoroot.lds").display()
-    );
     Ok(())
 }
 
@@ -120,7 +111,6 @@ const MANIFEST: &str = r#"[package]
 name = "pseudoroot-lib-embed"
 version = "0.2.2"
 edition = "2024"
-build = "build.rs"
 publish = false
 
 [lib]
@@ -134,19 +124,6 @@ libc = "0.2"
 pseudoroot-core = "0.2.2"
 
 [workspace]
-"#;
-
-/// Build script for the throwaway package: applies the version script on Linux
-/// (same logic as `pseudoroot-lib/build.rs`, which builds the standalone lib).
-const EMBED_BUILD_SCRIPT: &str = r#"fn main() {
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
-        let dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        let lds = std::path::Path::new(&dir).join("pseudoroot.lds");
-        println!("cargo:rerun-if-changed={}", lds.display());
-        println!("cargo:rustc-cdylib-link-arg=-Wl,--version-script={}", lds.display());
-        println!("cargo:rustc-cdylib-link-arg=-Wl,--export-dynamic");
-    }
-}
 "#;
 
 fn copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
