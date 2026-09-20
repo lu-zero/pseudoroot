@@ -109,7 +109,7 @@ fn try_main() -> Result<(), String> {
 /// workspace root so it never merges with the surrounding repo workspace.
 const MANIFEST: &str = r#"[package]
 name = "pseudoroot-lib-embed"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 publish = false
 
@@ -121,7 +121,7 @@ path = "src/lib.rs"
 [dependencies]
 ctor = "1"
 libc = "0.2"
-pseudoroot-core = "0.2.2"
+pseudoroot-core = "0.2.3"
 
 [workspace]
 "#;
